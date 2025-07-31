@@ -2,11 +2,21 @@ import streamlit as st
 import pandas as pd
 import math
 from pathlib import Path
+import numpy as np
+
+from datetime import datetime
+import time
+import threading
+import paho.mqtt.client as mqtt
+
+import paho.mqtt.publish as publish
+import random
+
 
 # Set the title and favicon that appear in the Browser's tab bar.
 st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
+    page_title='BESS - Gerenciamento', #Tag da URL
+    page_icon=':zap:', # Emoji da URL
 )
 
 # -----------------------------------------------------------------------------
@@ -26,7 +36,7 @@ def get_gdp_data():
     raw_gdp_df = pd.read_csv(DATA_FILENAME)
 
     MIN_YEAR = 1960
-    MAX_YEAR = 2022
+    MAX_YEAR = 2000
 
     # The data above has columns like:
     # - Country Name
@@ -63,89 +73,105 @@ gdp_df = get_gdp_data()
 # Draw the actual page
 
 # Set the title that appears at the top of the page.
+st.image("Logo-Baterias-Moura.png", width=200)
 '''
-# :earth_americas: GDP dashboard
+# :zap: BESS - Battery Energy Storage System
 
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
+Este projeto poderá servir como base para pesquisas, desenvolvimento de projetos de 
+engenharia elétrica/energia, e implementação prática de soluções baseadas em 
+armazenamento energético.
 '''
 
 # Add some spacing
 ''
 ''
 
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
+opcao_estado = st.selectbox(
+    'Selecione o BESS:',
+    ['-', 'PB', 'RN', 'PE']
 )
 
+if opcao_estado == 'PB':
+    opcao_cidade = st.selectbox(
+        'Selecione a cidade:',
+        ['-', 'João Pessoa', 'Campina Grande']
+    )
+
+elif opcao_estado == 'PE':
+    opcao_cidade = st.selectbox(
+        'Selecione a cidade:',
+        ['-', 'Recife', 'Caruaru']
+    )
+
+elif opcao_estado == 'RN':
+    opcao_cidade = st.selectbox(
+        'Selecione a cidade:',
+        ['-', 'Natal', 'Mossoró']
+    )
+
+# Exemplo extra (opcional): se quiser mostrar a escolha
+if opcao_estado != '-' and opcao_cidade != '-':
+    st.write(f'Você selecionou: {opcao_cidade} - {opcao_estado}')
+    grafico = True
+else: grafico = False
+
 ''
 ''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
 ''
+if (grafico):
+    # Dados globais
+    df = pd.DataFrame(columns=['Hora', 'Valor'])
 
-cols = st.columns(4)
+    # Lock para garantir acesso sincronizado aos dados
+    lock = threading.Lock()
 
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
+    # Função chamada ao receber mensagem
+    def on_message(client, userdata, msg):
+        global df
+        valor = float(msg.payload.decode())
 
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
+        with lock:
+            nova_linha = pd.DataFrame({
+                'Hora': [datetime.now()],
+                'Valor': [valor]
+            })
+            df = pd.concat([df, nova_linha], ignore_index=True)
 
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
+    # Configura o cliente MQTT
+    def iniciar_mqtt():
+        client = mqtt.Client()
+        client.on_message = on_message
 
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+        # Conecte ao broker (altere se necessário)
+        client.connect("broker.hivemq.com", 1883, 60)
+
+        # Tópico que deseja assinar (ex: "bess/energia")
+        client.subscribe("bess/energia")
+
+        client.loop_forever()
+
+    # Inicia o MQTT em uma thread separada
+    threading.Thread(target=iniciar_mqtt, daemon=True).start()
+
+    # Espaço do gráfico
+    grafico = st.empty()
+
+    # Loop do Streamlit para atualizar gráfico
+    while True:
+        with lock:
+            if not df.empty:
+                df_filtrado = df.tail(50).set_index('Hora')  # Limita a 50 pontos mais recentes
+                grafico.line_chart(df_filtrado)
+
+        time.sleep(1)
+
+broker = "broker.hivemq.com"
+topico = "bess/energia"
+
+for i in range(100):
+    tensao = random.uniform(230.0, 210.0)  # valor entre 100V e 200V
+    publish.single(topico, str(tensao), hostname=broker)
+    print(f"[{i+1}/100] Tensão enviada: {tensao} V")
+    time.sleep(3)  # atraso de 100ms entre envios
+
+
