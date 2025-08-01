@@ -142,59 +142,63 @@ else: grafico = False
 ''
 ''
 if (grafico):
-    # Dados globais
-    df = pd.DataFrame(columns=['Hora', 'Valor'])
+    # Dicionário para armazenar os dados de cada parâmetro
+    dados = {
+        'tensao': pd.DataFrame(columns=['Hora', 'Valor']),
+        'corrente': pd.DataFrame(columns=['Hora', 'Valor']),
+        'potencia': pd.DataFrame(columns=['Hora', 'Valor'])
+    }
 
-    # Lock para garantir acesso sincronizado aos dados
+    # Mapeia tópico para o nome do parâmetro
+    topicos = {
+        "bess/telemetria/tensao": "tensao",
+        "bess/telemetria/corrente": "corrente",
+        "bess/telemetria/potencia": "potencia"
+    }
+
     lock = threading.Lock()
 
-    # Função chamada ao receber mensagem
+
+
+ # Callback quando uma mensagem é recebida
     def on_message(client, userdata, msg):
-        global df
+        topico = msg.topic
         valor = float(msg.payload.decode())
+        agora = datetime.now()
 
-        with lock:
-            nova_linha = pd.DataFrame({
-                'Hora': [datetime.now()],
-                'Valor': [valor]
-            })
-            df = pd.concat([df, nova_linha], ignore_index=True)
+        if topico in topicos:
+            parametro = topicos[topico]
+            with lock:
+                nova_linha = pd.DataFrame({'Hora': [agora], 'Valor': [valor]})
+                dados[parametro] = pd.concat([dados[parametro], nova_linha], ignore_index=True)
 
-    # Configura o cliente MQTT
+                # Limita a 100 dados
+                if len(dados[parametro]) > 100:
+                    dados[parametro] = dados[parametro].iloc[-100:]
+
+    # Inicia o cliente MQTT em uma thread
     def iniciar_mqtt():
         client = mqtt.Client()
         client.on_message = on_message
-
-        # Conecte ao broker (altere se necessário)
         client.connect("broker.hivemq.com", 1883, 60)
 
-        # Tópico que deseja assinar (ex: "bess/energia")
-        client.subscribe("bess/telemetria/tensao")
+        for t in topicos:
+            client.subscribe(t)
 
         client.loop_forever()
 
-    # Inicia o MQTT em uma thread separada
     threading.Thread(target=iniciar_mqtt, daemon=True).start()
 
-    # Espaço do gráfico
-    grafico = st.empty()
+    # Espaço para o gráfico
+    grafico_area = st.empty()
 
-    # Loop do Streamlit para atualizar gráfico
+    # Loop de atualização
     while True:
         with lock:
-            if not df.empty:
-                df_filtrado = df.tail(50).set_index('Hora')  # Limita a 50 pontos mais recentes
-                grafico.line_chart(df_filtrado)
-
+            df_atual = dados[parametro_selecionado]
+            if not df_atual.empty:
+                df_plot = df_atual.tail(50).set_index('Hora')
+                grafico_area.line_chart(df_plot)
         time.sleep(1)
-
-broker = "broker.hivemq.com"
-topico = "bess/telemetria/corrente"
-
-for i in range(100):
-    tensao = random.uniform(230.0, 210.0)  # valor entre 100V e 200V
-    publish.single(topico, str(tensao), hostname=broker)
-    print(f"[{i+1}/100] Tensão enviada: {tensao} V")
-    time.sleep(3)  # atraso de 100ms entre envios
 
 
