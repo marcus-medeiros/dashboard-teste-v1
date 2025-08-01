@@ -35,18 +35,19 @@ if 'mqtt_started' not in st.session_state:
 
 # --- 3. LÓGICA MQTT ---
 def on_connect(client, userdata, flags, rc):
+    print(f"[MQTT] Conectado! Código de retorno: {rc}")
     if rc == 0:
-        print("Conexão com MQTT estabelecida.")
+        print(f"[MQTT] Inscrito em: {TOPICO_WILDCARD}")
         client.subscribe(TOPICO_WILDCARD)
-        print(f"Inscrito em: {TOPICO_WILDCARD}")
     else:
-        print(f"Falha na conexão com MQTT, código: {rc}")
+        print("[MQTT] Falha na conexão.")
 
 def on_message(client, userdata, msg):
     try:
         parametro = msg.topic.split('/')[-1]
         valor = float(msg.payload.decode('utf-8'))
         agora = datetime.now()
+        print(f"[MQTT] Mensagem recebida: {msg.topic} -> {valor}")
 
         if parametro in st.session_state.data:
             st.session_state.data['timestamp'].append(agora)
@@ -60,8 +61,8 @@ def on_message(client, userdata, msg):
                     if st.session_state.data[key]:
                         st.session_state.data[key].pop(0)
 
-    except (ValueError, TypeError, IndexError):
-        pass
+    except Exception as e:
+        print(f"[ERRO MQTT] {e}")
 
 def start_mqtt_client():
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
