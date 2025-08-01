@@ -1,106 +1,50 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
-import numpy as np
-
+import threading
 from datetime import datetime
 import time
-import threading
 import paho.mqtt.client as mqtt
 
-import paho.mqtt.publish as publish
-import random
-
-
-# Set the title and favicon that appear in the Browser's tab bar.
+# Configuração da página
 st.set_page_config(
-    page_title='BESS - Gerenciamento', #Tag da URL
-    page_icon=':zap:', # Emoji da URL
+    page_title='BESS - Gerenciamento',
+    page_icon=':zap:',
+    layout="wide"
 )
 
+# Título da página
+st.title(":zap: BESS - Battery Energy Storage System")
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-#st.image("Logo-Baterias-Moura.png", width=200)
-'''
-# :zap: BESS - Battery Energy Storage System
-
-Este projeto poderá servir como base para pesquisas, desenvolvimento de projetos de 
-engenharia elétrica/energia, e implementação prática de soluções baseadas em 
-armazenamento energético.
-'''
-
-# Add some spacing
-''
-''
-
-
-# --- BARRA LATERAL (SIDEBAR) ---
-# Usamos o 'with st.sidebar:' para agrupar todos os elementos que irão para a lateral.
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("Painel de Controle BESS ⚡️")
 
-    st.header("Localização")
+    opcao_estado = st.selectbox('Selecione o Estado:', ['-', 'PB', 'RN', 'PE'])
 
-    # Seletor de estado (BESS)
-    opcao_estado = st.selectbox(
-        'Selecione o Estado:',
-        ['-', 'PB', 'RN', 'PE'],
-        key="select_estado" # Adicionar uma key é uma boa prática
-    )
-    
-    # Lógica para o seletor de cidade dependente do estado
-    opcao_cidade = '-' # Valor padrão
+    opcao_cidade = '-'
     if opcao_estado == 'PB':
-        opcao_cidade = st.selectbox(
-            'Selecione a cidade:',
-            ['-', 'João Pessoa', 'Campina Grande', 'Várzea'],
-            key="select_cidade_pb"
-        )
+        opcao_cidade = st.selectbox('Selecione a cidade:', ['-', 'João Pessoa', 'Campina Grande', 'Várzea'])
     elif opcao_estado == 'PE':
-        opcao_cidade = st.selectbox(
-            'Selecione a cidade:',
-            ['-', 'Recife', 'Caruaru'],
-            key="select_cidade_pe"
-        )
+        opcao_cidade = st.selectbox('Selecione a cidade:', ['-', 'Recife', 'Caruaru'])
     elif opcao_estado == 'RN':
-        opcao_cidade = st.selectbox(
-            'Selecione a cidade:',
-            ['-', 'Natal', 'Mossoró'],
-            key="select_cidade_rn"
-        )
+        opcao_cidade = st.selectbox('Selecione a cidade:', ['-', 'Natal', 'Mossoró'])
 
-    # Seletor de parâmetro para o gráfico
-    st.markdown("---")
-    parametro_selecionado = st.selectbox(
-        "Selecione o parâmetro do gráfico:",
-        ('potencia', 'tensao', 'corrente'),
-        # A função format_func deixa a exibição mais amigável
-        format_func=lambda x: f"{x.capitalize()} ({'kW' if x == 'potencia' else 'V' if x == 'tensao' else 'A'})"
-    )
-    st.markdown("---") # Adiciona um separador visual
-
-# Exemplo extra (opcional): se quiser mostrar a escolha
 if opcao_estado != '-' and opcao_cidade != '-':
     st.write(f'Você selecionou: {opcao_cidade} - {opcao_estado}')
     grafico = True
-else: grafico = False
+else:
+    grafico = False
 
-''
-''
-''
-if (grafico):
-    # Dicionário para armazenar os dados de cada parâmetro
+# --- GERAÇÃO DOS GRÁFICOS ---
+if grafico:
+    # Estrutura de dados
     dados = {
         'tensao': pd.DataFrame(columns=['Hora', 'Valor']),
         'corrente': pd.DataFrame(columns=['Hora', 'Valor']),
         'potencia': pd.DataFrame(columns=['Hora', 'Valor'])
     }
 
-    # Mapeia tópico para o nome do parâmetro
+    # Mapeia tópicos para nomes
     topicos = {
         "bess/telemetria/tensao": "tensao",
         "bess/telemetria/corrente": "corrente",
@@ -109,12 +53,13 @@ if (grafico):
 
     lock = threading.Lock()
 
-
-
- # Callback quando uma mensagem é recebida
+    # Callback do MQTT
     def on_message(client, userdata, msg):
         topico = msg.topic
-        valor = float(msg.payload.decode())
+        try:
+            valor = float(msg.payload.decode())
+        except:
+            return
         agora = datetime.now()
 
         if topico in topicos:
@@ -123,11 +68,10 @@ if (grafico):
                 nova_linha = pd.DataFrame({'Hora': [agora], 'Valor': [valor]})
                 dados[parametro] = pd.concat([dados[parametro], nova_linha], ignore_index=True)
 
-                # Limita a 100 dados
                 if len(dados[parametro]) > 100:
                     dados[parametro] = dados[parametro].iloc[-100:]
 
-    # Inicia o cliente MQTT em uma thread
+    # Thread MQTT
     def iniciar_mqtt():
         client = mqtt.Client()
         client.on_message = on_message
@@ -140,16 +84,19 @@ if (grafico):
 
     threading.Thread(target=iniciar_mqtt, daemon=True).start()
 
-    # Espaço para o gráfico
-    grafico_area = st.empty()
+    # Cria colunas para os gráficos
+    col1, col2, col3 = st.columns(3)
+    grafico_tensao = col1.empty()
+    grafico_corrente = col2.empty()
+    grafico_potencia = col3.empty()
 
-    # Loop de atualização
+    # Loop de atualização dos gráficos
     while True:
         with lock:
-            df_atual = dados[parametro_selecionado]
-            if not df_atual.empty:
-                df_plot = df_atual.tail(50).set_index('Hora')
-                grafico_area.line_chart(df_plot)
+            for parametro, area in zip(['tensao', 'corrente', 'potencia'],
+                                       [grafico_tensao, grafico_corrente, grafico_potencia]):
+                df = dados[parametro]
+                if not df.empty:
+                    df_plot = df.tail(50).set_index("Hora")
+                    area.line_chart(df_plot)
         time.sleep(1)
-
-
