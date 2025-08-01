@@ -4,6 +4,7 @@ import threading
 from datetime import datetime
 import time
 import paho.mqtt.client as mqtt
+import matplotlib.pyplot as plt
 
 # Configuração da página
 st.set_page_config(
@@ -45,7 +46,7 @@ if grafico:
     }
 
     # Mapeia tópicos para nomes
-    cidade_formatada = opcao_cidade.lower().replace(" ", "_")  # ex: "João Pessoa" → "joão_pessoa"
+    cidade_formatada = opcao_cidade.lower().replace(" ", "_")
     topicos = {
         f"bess/telemetria/{cidade_formatada}/tensao": "tensao",
         f"bess/telemetria/{cidade_formatada}/corrente": "corrente",
@@ -91,13 +92,27 @@ if grafico:
     grafico_corrente = col2.empty()
     grafico_potencia = col3.empty()
 
-    # Loop de atualização dos gráficos
     while True:
         with lock:
-            for parametro, area in zip(['tensao', 'corrente', 'potencia'],
-                                       [grafico_tensao, grafico_corrente, grafico_potencia]):
+            for parametro, area, titulo, unidade in zip(
+                ['tensao', 'corrente', 'potencia'],
+                [grafico_tensao, grafico_corrente, grafico_potencia],
+                ['Tensão', 'Corrente', 'Potência'],
+                ['Volts (V)', 'Ampères (A)', 'Kilowatts (kW)']
+            ):
                 df = dados[parametro]
                 if not df.empty:
                     df_plot = df.tail(50).set_index("Hora")
-                    area.line_chart(df_plot)
+
+                    # Cria figura matplotlib
+                    fig, ax = plt.subplots(figsize=(5, 3))
+                    ax.plot(df_plot.index, df_plot['Valor'], label=parametro.capitalize())
+                    ax.set_title(titulo)
+                    ax.set_xlabel("Hora")
+                    ax.set_ylabel(unidade)
+                    ax.legend()
+                    ax.grid(True)
+                    fig.autofmt_xdate()
+
+                    area.pyplot(fig)
         time.sleep(1)
