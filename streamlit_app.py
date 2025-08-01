@@ -4,7 +4,6 @@ import threading
 from datetime import datetime
 import time
 import paho.mqtt.client as mqtt
-import altair as alt
 
 # Configuração da página
 st.set_page_config(
@@ -95,24 +94,10 @@ if grafico:
     # Loop de atualização dos gráficos
     while True:
         with lock:
-            for parametro, area, titulo, unidade in zip(
-                ['tensao', 'corrente', 'potencia'],
-                [grafico_tensao, grafico_corrente, grafico_potencia],
-                ['Tensão', 'Corrente', 'Potência'],
-                ['Volts (V)', 'Ampères (A)', 'Kilowatts (kW)']
-            ):
+            for parametro, area in zip(['tensao', 'corrente', 'potencia'],
+                                       [grafico_tensao, grafico_corrente, grafico_potencia]):
                 df = dados[parametro]
                 if not df.empty:
-                    df_plot = df.tail(50).copy()
-                    df_plot['Hora'] = pd.to_datetime(df_plot['Hora'])
-                    chart = alt.Chart(df_plot).mark_line().encode(
-                        x=alt.X('Hora:T', title='Hora'),
-                        y=alt.Y('Valor:Q', title=unidade),
-                        tooltip=[alt.Tooltip('Hora:T', title='Hora'), alt.Tooltip('Valor:Q', title=unidade)],
-                    ).properties(
-                        title=titulo,
-                        width=300,
-                        height=250
-                    ).interactive()
-                    area.altair_chart(chart, use_container_width=True)
+                    df_plot = df.tail(50).set_index("Hora")
+                    area.line_chart(df_plot)
         time.sleep(1)
