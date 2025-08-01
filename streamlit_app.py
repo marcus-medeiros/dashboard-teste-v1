@@ -90,6 +90,13 @@ engenharia elétrica/energia, e implementação prática de soluções baseadas 
 armazenamento energético.
 '''
 
+# Inicializa o session_state AQUI, no início e fora de qualquer condicional.
+if "timestamps" not in st.session_state:
+    st.session_state.timestamps = []
+if "values" not in st.session_state:
+    st.session_state.values = []
+
+    
 # Add some spacing
 ''
 ''
@@ -127,15 +134,12 @@ else: grafico = False
 ''
 ''
 
-st.write("Timestamps:", st.session_state.timestamps)
-st.write("Values:", st.session_state.values)
+
+
 
 if (grafico):
-    # Inicia estrutura de dados
-    if "timestamps" not in st.session_state:
-        st.session_state.timestamps = []
-    if "values" not in st.session_state:
-        st.session_state.values = []
+    # As funções MQTT e a lógica do gráfico continuam aqui
+    # Não precisa mais inicializar o session_state aqui dentro.
 
     # Funções MQTT
     def on_connect(client, userdata, flags, rc):
@@ -147,7 +151,7 @@ if (grafico):
             agora = datetime.now()
             st.session_state.timestamps.append(agora)
             st.session_state.values.append(valor)
-
+            
             # Mantém apenas os últimos 60 segundos
             limite = agora - timedelta(seconds=60)
             while st.session_state.timestamps and st.session_state.timestamps[0] < limite:
@@ -173,22 +177,27 @@ if (grafico):
     # Interface
     st.title("Gráfico MQTT em tempo real (últimos 60s)")
 
-    # Cria o gráfico Plotly
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=st.session_state.timestamps,
-        y=st.session_state.values,
-        mode="lines+markers",
-        line=dict(color="blue")
-    ))
-    fig.update_layout(
-        xaxis_title="Tempo",
-        yaxis_title="Valor",
-        xaxis=dict(range=[datetime.now() - timedelta(seconds=60), datetime.now()]),
-        yaxis=dict(autorange=True),
-        height=400
-    )
+    # Para atualização automática, use um placeholder
+    placeholder = st.empty()
 
-    st.plotly_chart(fig, use_container_width=True)
+    # Loop para redesenhar o gráfico
+    while True:
+        with placeholder.container():
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=st.session_state.timestamps,
+                y=st.session_state.values,
+                mode="lines+markers",
+                line=dict(color="blue")
+            ))
+            fig.update_layout(
+                xaxis_title="Tempo",
+                yaxis_title="Potência (kW)", # Exemplo de unidade
+                # O range do eixo X se ajusta dinamicamente com os dados
+                yaxis=dict(autorange=True), 
+                height=400
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            time.sleep(1) # Atualiza a cada 1 segundo
 
 
