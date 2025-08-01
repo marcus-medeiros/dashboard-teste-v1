@@ -90,7 +90,7 @@ if cidades_selecionadas:
             # FIX: Atualizado para a API recomendada para evitar DeprecationWarning
             client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
             client.on_message = on_message
-            client.connect("test.mosquitto.org", 1883, 60)
+            client.connect("broker.hivemq.com", 1883, 60)
             
             if 'mqtt_connection_error' in st.session_state:
                 del st.session_state['mqtt_connection_error']
