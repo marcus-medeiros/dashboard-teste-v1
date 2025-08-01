@@ -86,6 +86,14 @@ armazenamento energético.
 ''
 ''
 
+
+st.sidebar.header("Configurações do Gráfico")
+parametro_selecionado = st.sidebar.selectbox(
+    "Selecione o parâmetro para exibir no gráfico:",
+    ('potencia', 'tensao', 'corrente'),
+    format_func=lambda x: f"{x.capitalize()} ({'kW' if x == 'potencia' else 'V' if x == 'tensao' else 'A'})"
+)
+
 opcao_estado = st.selectbox(
     'Selecione o BESS:',
     ['-', 'PB', 'RN', 'PE']
