@@ -126,6 +126,10 @@ else: grafico = False
 ''
 ''
 ''
+
+st.write("Timestamps:", st.session_state.timestamps)
+st.write("Values:", st.session_state.values)
+
 if (grafico):
     # Inicia estrutura de dados
     if "timestamps" not in st.session_state:
