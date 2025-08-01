@@ -6,6 +6,10 @@ import threading
 from datetime import datetime, timedelta
 import time
 
+from streamlit_autorefresh import st_autorefresh
+
+
+
 # --- 1. CONFIGURAÇÕES ---
 MQTT_BROKER = "broker.hivemq.com"
 MQTT_PORT = 1883
@@ -86,37 +90,36 @@ parametro_selecionado = st.sidebar.selectbox(
 
 placeholder = st.empty()
 
-# --- 6. LOOP PRINCIPAL ---
-while True:
-    with placeholder.container():
-        st.header("Métricas em Tempo Real")
+# Auto refresh a cada 1000 ms
+st_autorefresh(interval=1000, limit=None, key="auto_refresh")
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric(label="Tensão (V)", value=st.session_state.last_known['tensao'])
-        col2.metric(label="Corrente (A)", value=st.session_state.last_known['corrente'])
-        col3.metric(label="Potência (kW)", value=st.session_state.last_known['potencia'])
+with placeholder.container():
+    st.header("Métricas em Tempo Real")
 
-        st.write("---")
+    col1, col2, col3 = st.columns(3)
+    col1.metric(label="Tensão (V)", value=st.session_state.last_known['tensao'])
+    col2.metric(label="Corrente (A)", value=st.session_state.last_known['corrente'])
+    col3.metric(label="Potência (kW)", value=st.session_state.last_known['potencia'])
 
-        df = pd.DataFrame({
-            'timestamp': list(st.session_state.data['timestamp']),
-            'valor': list(st.session_state.data[parametro_selecionado])
-        }).dropna().drop_duplicates(subset='timestamp').sort_values('timestamp')
+    st.write("---")
 
-        st.header(f"Histórico de {parametro_selecionado.capitalize()}")
+    df = pd.DataFrame({
+        'timestamp': list(st.session_state.data['timestamp']),
+        'valor': list(st.session_state.data[parametro_selecionado])
+    }).dropna().drop_duplicates(subset='timestamp').sort_values('timestamp')
 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=df['timestamp'],
-            y=df['valor'],
-            mode='lines',
-            name=parametro_selecionado
-        ))
-        fig.update_layout(
-            height=450,
-            xaxis_title='Horário',
-            yaxis_title=f"{parametro_selecionado.capitalize()} ({'kW' if parametro_selecionado == 'potencia' else 'V' if parametro_selecionado == 'tensao' else 'A'})"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    st.header(f"Histórico de {parametro_selecionado.capitalize()}")
 
-    time.sleep(1)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df['timestamp'],
+        y=df['valor'],
+        mode='lines',
+        name=parametro_selecionado
+    ))
+    fig.update_layout(
+        height=450,
+        xaxis_title='Horário',
+        yaxis_title=f"{parametro_selecionado.capitalize()} ({'kW' if parametro_selecionado == 'potencia' else 'V' if parametro_selecionado == 'tensao' else 'A'})"
+    )
+    st.plotly_chart(fig, use_container_width=True)
