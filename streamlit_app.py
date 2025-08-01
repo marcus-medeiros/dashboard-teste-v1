@@ -132,4 +132,3 @@ st.experimental_set_query_params(count=count)
 
 atualizar()
 time.sleep(1)
-st.experimental_rerun()
