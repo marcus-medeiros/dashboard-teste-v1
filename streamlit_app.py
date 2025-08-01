@@ -28,7 +28,7 @@ with st.sidebar:
     elif opcao_estado == 'PE':
         opcao_cidade = st.selectbox('Selecione a cidade:', ['-', 'Recife', 'Caruaru'])
     elif opcao_estado == 'RN':
-        opcao_cidade = st.selectbox('Selecione a cidade:', ['-', 'Natal', 'Mossoró', 'Caicó'])
+        opcao_cidade = st.selectbox('Selecione a cidade:', ['-', 'Natal', 'Mossoró'])
 
 if opcao_estado != '-' and opcao_cidade != '-':
     st.write(f'Você selecionou: {opcao_cidade} - {opcao_estado}')
