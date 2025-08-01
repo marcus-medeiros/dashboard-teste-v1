@@ -13,7 +13,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Título da página
 st.title(":zap: BESS - Battery Energy Storage System")
 
 # Lista direta de cidades disponíveis
@@ -21,7 +20,6 @@ cidades_disponiveis = ['João Pessoa', 'Campina Grande', 'Várzea',
                       'Recife', 'Caruaru',
                       'Natal', 'Mossoró']
 
-# Sidebar com seleção múltipla de cidades
 with st.sidebar:
     st.header("Painel de Controle BESS ⚡️")
     opcao_cidades = st.multiselect('Selecione uma ou mais cidades:', cidades_disponiveis)
@@ -39,11 +37,9 @@ parametros = ['tensao', 'corrente', 'potencia']
 for cidade in opcao_cidades:
     dados[cidade] = {p: pd.DataFrame(columns=['Hora', 'Valor']) for p in parametros}
 
-# Função para formatar tópico MQTT
 def formatar_cidade(cidade):
     return cidade.lower().replace(" ", "_")
 
-# Mapeia tópicos MQTT para cidade e parâmetro
 topicos_para_cidade_parametro = {}
 for cidade in opcao_cidades:
     cidade_fmt = formatar_cidade(cidade)
@@ -51,7 +47,6 @@ for cidade in opcao_cidades:
         topico = f"bess/telemetria/{cidade_fmt}/{parametro}"
         topicos_para_cidade_parametro[topico] = (cidade, parametro)
 
-# Callback MQTT
 def on_message(client, userdata, msg):
     topico = msg.topic
     try:
@@ -66,11 +61,9 @@ def on_message(client, userdata, msg):
         with lock:
             nova_linha = pd.DataFrame({'Hora': [agora], 'Valor': [valor]})
             dados[cidade][parametro] = pd.concat([dados[cidade][parametro], nova_linha], ignore_index=True)
-            # Limita a 100 pontos
             if len(dados[cidade][parametro]) > 100:
                 dados[cidade][parametro] = dados[cidade][parametro].iloc[-100:]
 
-# Thread para rodar MQTT
 def iniciar_mqtt():
     client = mqtt.Client()
     client.on_message = on_message
@@ -81,7 +74,6 @@ def iniciar_mqtt():
 
 threading.Thread(target=iniciar_mqtt, daemon=True).start()
 
-# Função para criar gráfico Altair
 def criar_grafico(df, titulo, unidade):
     if df.empty:
         return None
@@ -98,35 +90,31 @@ def criar_grafico(df, titulo, unidade):
     ).interactive()
     return chart
 
-# Exibe gráficos por cidade
-for cidade in opcao_cidades:
-    st.subheader(f"📍 Cidade: {cidade}")
-    col1, col2, col3 = st.columns(3)
+# Placeholder para os gráficos
+placeholder = st.empty()
 
-    with lock:
-        df_tensao = dados[cidade]['tensao']
-        df_corrente = dados[cidade]['corrente']
-        df_potencia = dados[cidade]['potencia']
+# Atualiza a cada 1 segundo (1000 ms)
+def atualizar():
+    with placeholder.container():
+        for cidade in opcao_cidades:
+            st.subheader(f"📍 Cidade: {cidade}")
+            col1, col2, col3 = st.columns(3)
 
-    chart_tensao = criar_grafico(df_tensao, "Tensão", "Volts (V)")
-    chart_corrente = criar_grafico(df_corrente, "Corrente", "Ampères (A)")
-    chart_potencia = criar_grafico(df_potencia, "Potência", "Kilowatts (kW)")
+            with lock:
+                df_tensao = dados[cidade]['tensao']
+                df_corrente = dados[cidade]['corrente']
+                df_potencia = dados[cidade]['potencia']
 
-    if chart_tensao:
-        col1.altair_chart(chart_tensao, use_container_width=True)
-    else:
-        col1.write("Sem dados de tensão ainda.")
+            chart_tensao = criar_grafico(df_tensao, "Tensão", "Volts (V)")
+            chart_corrente = criar_grafico(df_corrente, "Corrente", "Ampères (A)")
+            chart_potencia = criar_grafico(df_potencia, "Potência", "Kilowatts (kW)")
 
-    if chart_corrente:
-        col2.altair_chart(chart_corrente, use_container_width=True)
-    else:
-        col2.write("Sem dados de corrente ainda.")
+            if chart_tensao:
+                col1.altair_chart(chart_tensao, use_container_width=True)
+            else:
+                col1.write("Sem dados de tensão ainda.")
 
-    if chart_potencia:
-        col3.altair_chart(chart_potencia, use_container_width=True)
-    else:
-        col3.write("Sem dados de potência ainda.")
-
-    st.markdown("---")
-
-    time.sleep(0.5)
+            if chart_corrente:
+                col2.altair_chart(chart_corrente, use_container_width=True)
+            else:
+                col2.write("Sem dados de corrente ainda.")
