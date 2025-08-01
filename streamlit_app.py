@@ -45,10 +45,11 @@ if grafico:
     }
 
     # Mapeia tópicos para nomes
+    cidade_formatada = opcao_cidade.lower().replace(" ", "_")  # ex: "João Pessoa" → "joão_pessoa"
     topicos = {
-        "bess/telemetria/tensao": "tensao",
-        "bess/telemetria/corrente": "corrente",
-        "bess/telemetria/potencia": "potencia"
+        f"bess/telemetria/{cidade_formatada}/tensao": "tensao",
+        f"bess/telemetria/{cidade_formatada}/corrente": "corrente",
+        f"bess/telemetria/{cidade_formatada}/potencia": "potencia"
     }
 
     lock = threading.Lock()
