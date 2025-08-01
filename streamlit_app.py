@@ -136,7 +136,8 @@ while True:
         }).dropna().drop_duplicates(subset='timestamp').sort_values('timestamp')
 
         # Cria o gráfico
-        st.header(f"Histórico de {parametro_selecionado.capitalize()}", key="grafico_header") # Chave opcional, mas boa prática
+        st.header(f"Histórico de {parametro_selecionado.capitalize()}")
+
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=df['timestamp'], 
