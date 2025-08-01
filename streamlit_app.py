@@ -112,26 +112,27 @@ placeholder = st.empty()
 
 # Loop principal da interface para atualização contínua
 while True:
+    # Todo o conteúdo que se atualiza deve estar dentro do "with placeholder.container()"
     with placeholder.container():
         st.header("Métricas em Tempo Real")
         
         # Exibe as métricas com os últimos valores conhecidos
         col1, col2, col3 = st.columns(3)
-        col1.metric("Tensão", f"{st.session_state.last_known['tensao']:.2f} V")
-        col2.metric("Corrente", f"{st.session_state.last_known['corrente']:.2f} A")
-        col3.metric("Potência", f"{st.session_state.last_known['potencia']:.2f} kW")
+        # Adicionando chaves únicas para cada métrica
+        col1.metric("Tensão", f"{st.session_state.last_known['tensao']:.2f} V", key="metric_tensao")
+        col2.metric("Corrente", f"{st.session_state.last_known['corrente']:.2f} A", key="metric_corrente")
+        col3.metric("Potência", f"{st.session_state.last_known['potencia']:.2f} kW", key="metric_potencia")
         
         st.write("---")
         
         # Prepara os dados para o gráfico selecionado
-        # Faz cópias para evitar problemas de concorrência durante a renderização
         df = pd.DataFrame({
             'timestamp': list(st.session_state.data['timestamp']),
             'valor': list(st.session_state.data[parametro_selecionado])
         }).dropna().drop_duplicates(subset='timestamp').sort_values('timestamp')
 
         # Cria o gráfico
-        st.header(f"Histórico de {parametro_selecionado.capitalize()}")
+        st.header(f"Histórico de {parametro_selecionado.capitalize()}", key="grafico_header") # Chave opcional, mas boa prática
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=df['timestamp'], 
@@ -144,7 +145,9 @@ while True:
             xaxis_title='Horário',
             yaxis_title=f"{parametro_selecionado.capitalize()} ({'kW' if parametro_selecionado == 'potencia' else 'V' if parametro_selecionado == 'tensao' else 'A'})"
         )
-        st.plotly_chart(fig, use_container_width=True)
+        
+        # A CORREÇÃO PRINCIPAL ESTÁ AQUI: ADICIONANDO A 'KEY'
+        st.plotly_chart(fig, use_container_width=True, key="grafico_principal")
 
     # Pausa para controlar a taxa de atualização
     time.sleep(1)
