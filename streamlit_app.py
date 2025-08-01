@@ -188,15 +188,13 @@ if (grafico):
 
         time.sleep(1)
 
+broker = "broker.hivemq.com"
+topico = "bess/energia"
 
-def publisher_loop():
-    broker = "broker.hivemq.com"
-    topico = "bess/energia"
-    while True:
-        tensao = random.uniform(210.0, 230.0)
-        publish.single(topico, str(tensao), hostname=broker)
-        time.sleep(3)
-
-threading.Thread(target=publisher_loop, daemon=True).start()
+for i in range(100):
+    tensao = random.uniform(230.0, 210.0)  # valor entre 100V e 200V
+    publish.single(topico, str(tensao), hostname=broker)
+    print(f"[{i+1}/100] Tensão enviada: {tensao} V")
+    time.sleep(3)  # atraso de 100ms entre envios
 
 
