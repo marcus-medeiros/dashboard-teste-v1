@@ -119,9 +119,12 @@ while True:
         # Exibe as métricas com os últimos valores conhecidos
         col1, col2, col3 = st.columns(3)
         # Adicionando chaves únicas para cada métrica
-        col1.metric("Tensão", f"{st.session_state.last_known['tensao']:.2f} V", key="metric_tensao")
-        col2.metric("Corrente", f"{st.session_state.last_known['corrente']:.2f} A", key="metric_corrente")
-        col3.metric("Potência", f"{st.session_state.last_known['potencia']:.2f} kW", key="metric_potencia")
+        # --- CORREÇÃO APLICADA AQUI ---
+        # O valor passado é o número puro. A unidade (V, A, kW) foi movida para o label.
+        col1.metric(label="Tensão (V)", value=st.session_state.last_known['tensao'], key="metric_tensao")
+        col2.metric(label="Corrente (A)", value=st.session_state.last_known['corrente'], key="metric_corrente")
+        col3.metric(label="Potência (kW)", value=st.session_state.last_known['potencia'], key="metric_potencia")
+
         
         st.write("---")
         
