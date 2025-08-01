@@ -91,17 +91,7 @@ armazenamento energético.
 # Usamos o 'with st.sidebar:' para agrupar todos os elementos que irão para a lateral.
 with st.sidebar:
     st.header("Painel de Controle BESS ⚡️")
-    st.markdown("---")
 
-    # Seletor de parâmetro para o gráfico
-    parametro_selecionado = st.selectbox(
-        "Selecione o parâmetro do gráfico:",
-        ('potencia', 'tensao', 'corrente'),
-        # A função format_func deixa a exibição mais amigável
-        format_func=lambda x: f"{x.capitalize()} ({'kW' if x == 'potencia' else 'V' if x == 'tensao' else 'A'})"
-    )
-
-    st.markdown("---") # Adiciona um separador visual
     st.header("Localização")
 
     # Seletor de estado (BESS)
@@ -131,6 +121,16 @@ with st.sidebar:
             ['-', 'Natal', 'Mossoró'],
             key="select_cidade_rn"
         )
+
+    # Seletor de parâmetro para o gráfico
+    st.markdown("---")
+    parametro_selecionado = st.selectbox(
+        "Selecione o parâmetro do gráfico:",
+        ('potencia', 'tensao', 'corrente'),
+        # A função format_func deixa a exibição mais amigável
+        format_func=lambda x: f"{x.capitalize()} ({'kW' if x == 'potencia' else 'V' if x == 'tensao' else 'A'})"
+    )
+    st.markdown("---") # Adiciona um separador visual
 
 # Exemplo extra (opcional): se quiser mostrar a escolha
 if opcao_estado != '-' and opcao_cidade != '-':
