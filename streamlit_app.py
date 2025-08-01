@@ -8,9 +8,12 @@ from datetime import datetime
 import time
 import threading
 import paho.mqtt.client as mqtt
+import plotly.graph_objects as go
 
-import paho.mqtt.publish as publish
-import random
+
+# git add .
+# git commit -m "Descreva o que foi alterado aqui"
+# git push
 
 
 # Set the title and favicon that appear in the Browser's tab bar.
@@ -119,59 +122,64 @@ else: grafico = False
 ''
 ''
 if (grafico):
-    # Dados globais
-    df = pd.DataFrame(columns=['Hora', 'Valor'])
+    # Inicia estrutura de dados
+    if "timestamps" not in st.session_state:
+        st.session_state.timestamps = []
+    if "values" not in st.session_state:
+        st.session_state.values = []
 
-    # Lock para garantir acesso sincronizado aos dados
-    lock = threading.Lock()
+    # Funções MQTT
+    def on_connect(client, userdata, flags, rc):
+        client.subscribe(MQTT_TOPIC)
 
-    # Função chamada ao receber mensagem
     def on_message(client, userdata, msg):
-        global df
-        valor = float(msg.payload.decode())
+        try:
+            valor = float(msg.payload.decode())
+            agora = datetime.now()
+            st.session_state.timestamps.append(agora)
+            st.session_state.values.append(valor)
 
-        with lock:
-            nova_linha = pd.DataFrame({
-                'Hora': [datetime.now()],
-                'Valor': [valor]
-            })
-            df = pd.concat([df, nova_linha], ignore_index=True)
+            # Mantém apenas os últimos 60 segundos
+            limite = agora - timedelta(seconds=60)
+            while st.session_state.timestamps and st.session_state.timestamps[0] < limite:
+                st.session_state.timestamps.pop(0)
+                st.session_state.values.pop(0)
+        except:
+            pass
 
-    # Configura o cliente MQTT
-    def iniciar_mqtt():
+    def start_mqtt():
         client = mqtt.Client()
+        client.on_connect = on_connect
         client.on_message = on_message
-
-        # Conecte ao broker (altere se necessário)
-        client.connect("broker.hivemq.com", 1883, 60)
-
-        # Tópico que deseja assinar (ex: "bess/energia")
-        client.subscribe("bess/energia")
-
+        client.connect(MQTT_BROKER, MQTT_PORT, 60)
         client.loop_forever()
 
-    # Inicia o MQTT em uma thread separada
-    threading.Thread(target=iniciar_mqtt, daemon=True).start()
+    # Inicia o cliente MQTT em uma thread
+    if "mqtt_thread" not in st.session_state:
+        mqtt_thread = threading.Thread(target=start_mqtt)
+        mqtt_thread.daemon = True
+        mqtt_thread.start()
+        st.session_state.mqtt_thread = mqtt_thread
 
-    # Espaço do gráfico
-    grafico = st.empty()
+    # Interface
+    st.title("Gráfico MQTT em tempo real (últimos 60s)")
 
-    # Loop do Streamlit para atualizar gráfico
-    while True:
-        with lock:
-            if not df.empty:
-                df_filtrado = df.tail(50).set_index('Hora')  # Limita a 50 pontos mais recentes
-                grafico.line_chart(df_filtrado)
+    # Cria o gráfico Plotly
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=st.session_state.timestamps,
+        y=st.session_state.values,
+        mode="lines+markers",
+        line=dict(color="blue")
+    ))
+    fig.update_layout(
+        xaxis_title="Tempo",
+        yaxis_title="Valor",
+        xaxis=dict(range=[datetime.now() - timedelta(seconds=60), datetime.now()]),
+        yaxis=dict(autorange=True),
+        height=400
+    )
 
-        time.sleep(1)
-
-broker = "broker.hivemq.com"
-topico = "bess/energia"
-
-for i in range(100):
-    tensao = random.uniform(230.0, 210.0)  # valor entre 100V e 200V
-    publish.single(topico, str(tensao), hostname=broker)
-    print(f"[{i+1}/100] Tensão enviada: {tensao} V")
-    time.sleep(3)  # atraso de 100ms entre envios
+    st.plotly_chart(fig, use_container_width=True)
 
 
