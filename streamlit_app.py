@@ -76,7 +76,7 @@ if grafico:
     def iniciar_mqtt():
         client = mqtt.Client()
         client.on_message = on_message
-        client.connect("test.mosquitto.org", 1883, 60)
+        client.connect("broker.hivemq.com", 1883, 60)
 
         for t in topicos:
             client.subscribe(t)
