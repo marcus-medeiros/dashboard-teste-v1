@@ -87,35 +87,50 @@ armazenamento energético.
 ''
 
 
-st.sidebar.header("Configurações do Gráfico")
-parametro_selecionado = st.sidebar.selectbox(
-    "Selecione o parâmetro para exibir no gráfico:",
-    ('potencia', 'tensao', 'corrente'),
-    format_func=lambda x: f"{x.capitalize()} ({'kW' if x == 'potencia' else 'V' if x == 'tensao' else 'A'})"
-)
+# --- BARRA LATERAL (SIDEBAR) ---
+# Usamos o 'with st.sidebar:' para agrupar todos os elementos que irão para a lateral.
+with st.sidebar:
+    st.header("Painel de Controle BESS ⚡️")
+    st.markdown("---")
 
-opcao_estado = st.selectbox(
-    'Selecione o BESS:',
-    ['-', 'PB', 'RN', 'PE']
-)
-
-if opcao_estado == 'PB':
-    opcao_cidade = st.selectbox(
-        'Selecione a cidade:',
-        ['-', 'João Pessoa', 'Campina Grande', 'Várzea']
+    # Seletor de parâmetro para o gráfico
+    parametro_selecionado = st.selectbox(
+        "Selecione o parâmetro do gráfico:",
+        ('potencia', 'tensao', 'corrente'),
+        # A função format_func deixa a exibição mais amigável
+        format_func=lambda x: f"{x.capitalize()} ({'kW' if x == 'potencia' else 'V' if x == 'tensao' else 'A'})"
     )
 
-elif opcao_estado == 'PE':
-    opcao_cidade = st.selectbox(
-        'Selecione a cidade:',
-        ['-', 'Recife', 'Caruaru']
-    )
+    st.markdown("---") # Adiciona um separador visual
+    st.header("Localização")
 
-elif opcao_estado == 'RN':
-    opcao_cidade = st.selectbox(
-        'Selecione a cidade:',
-        ['-', 'Natal', 'Mossoró']
+    # Seletor de estado (BESS)
+    opcao_estado = st.selectbox(
+        'Selecione o Estado:',
+        ['-', 'PB', 'RN', 'PE'],
+        key="select_estado" # Adicionar uma key é uma boa prática
     )
+    
+    # Lógica para o seletor de cidade dependente do estado
+    opcao_cidade = '-' # Valor padrão
+    if opcao_estado == 'PB':
+        opcao_cidade = st.selectbox(
+            'Selecione a cidade:',
+            ['-', 'João Pessoa', 'Campina Grande', 'Várzea'],
+            key="select_cidade_pb"
+        )
+    elif opcao_estado == 'PE':
+        opcao_cidade = st.selectbox(
+            'Selecione a cidade:',
+            ['-', 'Recife', 'Caruaru'],
+            key="select_cidade_pe"
+        )
+    elif opcao_estado == 'RN':
+        opcao_cidade = st.selectbox(
+            'Selecione a cidade:',
+            ['-', 'Natal', 'Mossoró'],
+            key="select_cidade_rn"
+        )
 
 # Exemplo extra (opcional): se quiser mostrar a escolha
 if opcao_estado != '-' and opcao_cidade != '-':
