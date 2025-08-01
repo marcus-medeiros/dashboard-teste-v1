@@ -84,7 +84,7 @@ if not st.session_state.subscriber_started:
     st.session_state.subscriber_started = True
 
 # --- 6. INTERFACE GRÁFICA (STREAMLIT) ---
-st.set_page_config(page_title="Dashboard Tudo-em-Um", layout="wide")
+st.set_page_config(page_title="Dashboard MQTT, layout="wide")
 st.title("⚡️ Dashboard MQTT AAA")
 st.markdown(f"Este app simula, envia, recebe e exibe dados do tópico `{MQTT_TOPIC}`.")
 
