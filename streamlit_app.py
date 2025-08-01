@@ -187,23 +187,26 @@ if (grafico):
         mqtt_thread.start()
         st.session_state.mqtt_thread = mqtt_thread
 
-    # Interface
     st.title("Gráfico MQTT em tempo real (últimos 60s)")
-
-    # Para atualização automática, use um placeholder
     placeholder = st.empty()
 
-    # Loop para redesenhar o gráfico
     while True:
-        with placeholder.container():
-            # Crie cópias das listas para garantir consistência no momento da renderização
-            # Isso também previne que dados ruins cheguem ao Plotly
+        # --- INÍCIO DA CORREÇÃO ---
+        # Verificação de segurança para garantir que as variáveis de sessão são listas
+        if isinstance(st.session_state.values, list) and isinstance(st.session_state.timestamps, list):
             x_data = list(st.session_state.timestamps)
             y_data = list(st.session_state.values)
+        else:
+            # Se uma das variáveis foi corrompida (não é mais uma lista),
+            # usamos listas vazias para não quebrar o gráfico e mostramos um aviso.
+            x_data, y_data = [], []
+            st.warning("Fluxo de dados interrompido. Verifique se há uma reatribuição indevida da variável `st.session_state.values` no código.")
+        # --- FIM DA CORREÇÃO ---
 
+        with placeholder.container():
             fig = go.Figure()
             
-            # Use as cópias dos dados para plotar
+            # Use as cópias seguras dos dados
             fig.add_trace(go.Scatter(
                 x=x_data,
                 y=y_data,
