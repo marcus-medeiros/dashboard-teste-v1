@@ -85,7 +85,7 @@ if not st.session_state.subscriber_started:
 
 # --- 6. INTERFACE GRÁFICA (STREAMLIT) ---
 st.set_page_config(page_title="Dashboard Tudo-em-Um", layout="wide")
-st.title("⚡️ Dashboard MQTT Tudo-em-Um")
+st.title("⚡️ Dashboard MQTT AAA")
 st.markdown(f"Este app simula, envia, recebe e exibe dados do tópico `{MQTT_TOPIC}`.")
 
 # Atualização automática a cada 1000ms
