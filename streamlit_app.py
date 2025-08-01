@@ -1,4 +1,4 @@
-# Arquivo: dashboard_realtime.py (Versão Final Corrigida)
+# Arquivo: dashboard_realtime.py (Versão com padrão de atualização estável)
 
 import streamlit as st
 import pandas as pd
@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import paho.mqtt.client as mqtt
 import threading
 from datetime import datetime, timedelta
+import time # Importar a biblioteca time
 
 # --- Configurações ---
 MQTT_BROKER = "broker.hivemq.com"
@@ -21,7 +22,7 @@ if 'values' not in st.session_state:
 if 'mqtt_started' not in st.session_state:
     st.session_state.mqtt_started = False
 
-# --- Lógica MQTT ---
+# --- Lógica MQTT (a mesma, está correta) ---
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
         print("Conexão com MQTT estabelecida com sucesso.")
@@ -56,7 +57,7 @@ def start_mqtt_client():
     client.connect(MQTT_BROKER, MQTT_PORT, 60)
     client.loop_forever()
 
-# --- Inicia a thread do MQTT ---
+# --- Inicia a thread do MQTT (apenas uma vez) ---
 if not st.session_state.mqtt_started:
     print("Iniciando a thread do cliente MQTT...")
     mqtt_thread = threading.Thread(target=start_mqtt_client, daemon=True)
@@ -68,35 +69,39 @@ st.set_page_config(page_title="Dashboard BESS em Tempo Real", layout="wide")
 st.title("🔋 Dashboard BESS em Tempo Real")
 st.markdown(f"Exibindo dados do tópico `{MQTT_TOPIC}` nos últimos {DATA_WINDOW_SECONDS} segundos.")
 
+# Cria o placeholder que conterá todo o nosso dashboard dinâmico
 placeholder = st.empty()
 
-if isinstance(st.session_state.values, list):
-    current_values = list(st.session_state.values)
-    current_timestamps = list(st.session_state.timestamps)
-else:
-    current_values = []
-    current_timestamps = []
-    st.session_state.values = []
-    st.session_state.timestamps = []
-    st.error("O estado dos dados foi corrompido e resetado. Verifique o código por atribuições indevidas.")
+# Inicia o loop de atualização da interface
+while True:
+    # Todo o conteúdo que se atualiza deve estar dentro do "with placeholder.container()"
+    with placeholder.container():
+        # Verificação de segurança para os dados
+        if isinstance(st.session_state.values, list):
+            current_values = list(st.session_state.values)
+            current_timestamps = list(st.session_state.timestamps)
+        else:
+            current_values, current_timestamps = [], []
+            st.error("O estado dos dados foi corrompido e resetado. Verifique o código por atribuições indevidas.")
 
-with placeholder.container():
-    col1, col2 = st.columns(2)
-    if current_values:
-        last_value = current_values[-1]
-        avg_value = sum(current_values) / len(current_values)
-        col1.metric("Potência Atual", f"{last_value:.2f} kW")
-        col2.metric("Potência Média (na janela)", f"{avg_value:.2f} kW")
-    else:
-        col1.metric("Potência Atual", "Aguardando...")
-        col2.metric("Potência Média", "Aguardando...")
+        # Layout das métricas
+        col1, col2 = st.columns(2)
+        if current_values:
+            last_value = current_values[-1]
+            avg_value = sum(current_values) / len(current_values)
+            col1.metric("Potência Atual", f"{last_value:.2f} kW")
+            col2.metric("Potência Média (na janela)", f"{avg_value:.2f} kW")
+        else:
+            col1.metric("Potência Atual", "Aguardando...")
+            col2.metric("Potência Média", "Aguardando...")
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=current_timestamps, y=current_values, mode='lines+markers', name='Potência'))
-    fig.update_layout(height=500, xaxis_title='Horário', yaxis_title='Potência (kW)',
-                      xaxis=dict(range=[datetime.now() - timedelta(seconds=DATA_WINDOW_SECONDS), datetime.now()]))
-    st.plotly_chart(fig, use_container_width=True)
+        # Gráfico
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=current_timestamps, y=current_values, mode='lines+markers', name='Potência'))
+        fig.update_layout(height=500, xaxis_title='Horário', yaxis_title='Potência (kW)',
+                          xaxis=dict(range=[datetime.now() - timedelta(seconds=DATA_WINDOW_SECONDS), datetime.now()]))
+        st.plotly_chart(fig, use_container_width=True)
 
-
-# CORREÇÃO: st.rerun() não aceita o argumento ttl. A chamada correta é sem argumentos.
-st.rerun()
+    # Pausa o script por 1 segundo antes da próxima atualização
+    # ESTA LINHA É ESSENCIAL PARA O FUNCIONAMENTO
+    time.sleep(1)
