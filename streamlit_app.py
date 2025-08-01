@@ -1,124 +1,177 @@
 import streamlit as st
 import pandas as pd
-import random
-import os
+import math
+from pathlib import Path
+import numpy as np
+
 from datetime import datetime
 import time
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import threading
+import paho.mqtt.client as mqtt
 
-# --- CONFIGURAÇÕES GLOBAIS ---
-CSV_ARQUIVO = "bess_dados.csv"
-INTERVALO = 2  # segundos
-# Adicionamos a capacidade da bateria, essencial para o cálculo do SOC
-CAPACIDADE_BATERIA_kWh = 200.0  # Exemplo: Bateria com capacidade de 200 kWh
-
-# --- FUNÇÕES ---
-
-# Inicializa o CSV (sem alterações, está correto)
-def inicializar_csv():
-    if not os.path.exists(CSV_ARQUIVO):
-        df = pd.DataFrame(columns=["timestamp", "tensao", "corrente", "potencia", "soc"])
-        df.to_csv(CSV_ARQUIVO, index=False)
-
-# Simula e salva novo dado com a lógica do SOC corrigida
-def gerar_e_salvar_dado(soc_atual):
-    # Geração dos dados brutos
-    timestamp = datetime.now()
-    tensao = round(random.uniform(320, 410), 2)
-    corrente = round(random.uniform(-120, 120), 2) # Negativo=carregando, Positivo=descarregando
-    potencia = round(tensao * corrente / 1000, 2)  # Em kW
-
-    # --- LÓGICA DO SOC CORRIGIDA ---
-    # 1. Calcula a energia em kWh durante o intervalo
-    energia_kWh = potencia * (INTERVALO / 3600)
-    # 2. Calcula a variação percentual do SOC
-    delta_soc_percent = (energia_kWh / CAPACIDADE_BATERIA_kWh) * 100
-    # 3. Aplica a variação (inversa à potência: se potência > 0, SOC diminui)
-    soc_novo = max(0, min(100, soc_atual - delta_soc_percent))
-
-    novo_dado = {
-        "timestamp": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-        "tensao": tensao,
-        "corrente": corrente,
-        "potencia": potencia,
-        "soc": round(soc_novo, 2)
-    }
-
-    # Salva o novo dado no CSV sem precisar reler o arquivo
-    df_novo_dado = pd.DataFrame([novo_dado])
-    df_novo_dado.to_csv(CSV_ARQUIVO, mode='a', header=False, index=False)
-    
-    return soc_novo, novo_dado
+import paho.mqtt.publish as publish
+import random
 
 
-# --- INTERFACE STREAMLIT ---
-st.set_page_config("Simulador BESS Otimizado", layout="wide")
-st.title("🔋 Dashboard com Simulador BESS Otimizado")
-
-# Inicializa o CSV apenas uma vez
-inicializar_csv()
-
-# --- LÓGICA DE PERFORMANCE CORRIGIDA ---
-# Carrega o DataFrame para a memória (session_state) apenas uma vez
-if 'df_dados' not in st.session_state:
-    st.session_state.df_dados = pd.read_csv(CSV_ARQUIVO)
-    st.session_state.df_dados['timestamp'] = pd.to_datetime(st.session_state.df_dados['timestamp'])
-    
-    # Define o SOC inicial com base no último registro ou um valor aleatório
-    if not st.session_state.df_dados.empty:
-        st.session_state.soc = st.session_state.df_dados['soc'].iloc[-1]
-    else:
-        st.session_state.soc = random.uniform(40, 80)
-
-# Botão para gerar um novo dado
-if st.button("Simular e Adicionar Novo Dado"):
-    soc_atualizado, novo_dado_dict = gerar_e_salvar_dado(st.session_state.soc)
-    st.session_state.soc = soc_atualizado
-    
-    # Adiciona o novo dado ao DataFrame em memória, sem reler o CSV
-    df_novo = pd.DataFrame([novo_dado_dict])
-    df_novo['timestamp'] = pd.to_datetime(df_novo['timestamp'])
-    st.session_state.df_dados = pd.concat([st.session_state.df_dados, df_novo], ignore_index=True)
-    
-    st.success("Novo dado simulado e adicionado com sucesso!")
-
-# Exibe as métricas e gráficos usando o DataFrame da memória
-df_display = st.session_state.df_dados
-
-st.subheader("Métricas Atuais")
-col1, col2, col3, col4 = st.columns(4)
-if not df_display.empty:
-    ultimo_dado = df_display.iloc[-1]
-    col1.metric("SOC Atual", f"{ultimo_dado['soc']:.2f} %")
-    col2.metric("Potência", f"{ultimo_dado['potencia']:.2f} kW")
-    col3.metric("Tensão", f"{ultimo_dado['tensao']:.2f} V")
-    col4.metric("Corrente", f"{ultimo_dado['corrente']:.2f} A")
-
-# --- SUGESTÃO DE MELHORIA: GRÁFICO COM DOIS EIXOS USANDO PLOTLY ---
-st.subheader("Histórico de Potência e Estado de Carga (SOC)")
-fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-# Adiciona o gráfico de Potência (eixo Y primário)
-fig.add_trace(
-    go.Scatter(x=df_display['timestamp'], y=df_display['potencia'], name="Potência (kW)"),
-    secondary_y=False,
+# Set the title and favicon that appear in the Browser's tab bar.
+st.set_page_config(
+    page_title='BESS - Gerenciamento', #Tag da URL
+    page_icon=':zap:', # Emoji da URL
 )
 
-# Adiciona o gráfico de SOC (eixo Y secundário)
-fig.add_trace(
-    go.Scatter(x=df_display['timestamp'], y=df_display['soc'], name="SOC (%)"),
-    secondary_y=True,
+# -----------------------------------------------------------------------------
+# Declare some useful functions.
+
+@st.cache_data
+def get_gdp_data():
+    """Grab GDP data from a CSV file.
+
+    This uses caching to avoid having to read the file every time. If we were
+    reading from an HTTP endpoint instead of a file, it's a good idea to set
+    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
+    """
+
+    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
+    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
+    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+
+    MIN_YEAR = 1960
+    MAX_YEAR = 2000
+
+    # The data above has columns like:
+    # - Country Name
+    # - Country Code
+    # - [Stuff I don't care about]
+    # - GDP for 1960
+    # - GDP for 1961
+    # - GDP for 1962
+    # - ...
+    # - GDP for 2022
+    #
+    # ...but I want this instead:
+    # - Country Name
+    # - Country Code
+    # - Year
+    # - GDP
+    #
+    # So let's pivot all those year-columns into two: Year and GDP
+    gdp_df = raw_gdp_df.melt(
+        ['Country Code'],
+        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
+        'Year',
+        'GDP',
+    )
+
+    # Convert years from string to integers
+    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+
+    return gdp_df
+
+gdp_df = get_gdp_data()
+
+# -----------------------------------------------------------------------------
+# Draw the actual page
+
+# Set the title that appears at the top of the page.
+#st.image("Logo-Baterias-Moura.png", width=200)
+'''
+# :zap: BESS - Battery Energy Storage System
+
+Este projeto poderá servir como base para pesquisas, desenvolvimento de projetos de 
+engenharia elétrica/energia, e implementação prática de soluções baseadas em 
+armazenamento energético.
+'''
+
+# Add some spacing
+''
+''
+
+opcao_estado = st.selectbox(
+    'Selecione o BESS:',
+    ['-', 'PB', 'RN', 'PE']
 )
 
-# Configura títulos e eixos
-fig.update_layout(title_text="Potência vs. SOC")
-fig.update_xaxes(title_text="Tempo")
-fig.update_yaxes(title_text="<b>Potência (kW)</b>", secondary_y=False)
-fig.update_yaxes(title_text="<b>SOC (%)</b>", secondary_y=True, range=[0, 100])
+if opcao_estado == 'PB':
+    opcao_cidade = st.selectbox(
+        'Selecione a cidade:',
+        ['-', 'João Pessoa', 'Campina Grande', 'Várzea']
+    )
 
-st.plotly_chart(fig, use_container_width=True)
+elif opcao_estado == 'PE':
+    opcao_cidade = st.selectbox(
+        'Selecione a cidade:',
+        ['-', 'Recife', 'Caruaru']
+    )
+
+elif opcao_estado == 'RN':
+    opcao_cidade = st.selectbox(
+        'Selecione a cidade:',
+        ['-', 'Natal', 'Mossoró']
+    )
+
+# Exemplo extra (opcional): se quiser mostrar a escolha
+if opcao_estado != '-' and opcao_cidade != '-':
+    st.write(f'Você selecionou: {opcao_cidade} - {opcao_estado}')
+    grafico = True
+else: grafico = False
+
+''
+''
+''
+if (grafico):
+    # Dados globais
+    df = pd.DataFrame(columns=['Hora', 'Valor'])
+
+    # Lock para garantir acesso sincronizado aos dados
+    lock = threading.Lock()
+
+    # Função chamada ao receber mensagem
+    def on_message(client, userdata, msg):
+        global df
+        valor = float(msg.payload.decode())
+
+        with lock:
+            nova_linha = pd.DataFrame({
+                'Hora': [datetime.now()],
+                'Valor': [valor]
+            })
+            df = pd.concat([df, nova_linha], ignore_index=True)
+
+    # Configura o cliente MQTT
+    def iniciar_mqtt():
+        client = mqtt.Client()
+        client.on_message = on_message
+
+        # Conecte ao broker (altere se necessário)
+        client.connect("broker.hivemq.com", 1883, 60)
+
+        # Tópico que deseja assinar (ex: "bess/energia")
+        client.subscribe("bess/energia")
+
+        client.loop_forever()
+
+    # Inicia o MQTT em uma thread separada
+    threading.Thread(target=iniciar_mqtt, daemon=True).start()
+
+    # Espaço do gráfico
+    grafico = st.empty()
+
+    # Loop do Streamlit para atualizar gráfico
+    while True:
+        with lock:
+            if not df.empty:
+                df_filtrado = df.tail(50).set_index('Hora')  # Limita a 50 pontos mais recentes
+                grafico.line_chart(df_filtrado)
+
+        time.sleep(1)
+
+broker = "broker.hivemq.com"
+topico = "bess/energia"
+
+for i in range(100):
+    tensao = random.uniform(230.0, 210.0)  # valor entre 100V e 200V
+    publish.single(topico, str(tensao), hostname=broker)
+    print(f"[{i+1}/100] Tensão enviada: {tensao} V")
+    time.sleep(3)  # atraso de 100ms entre envios
 
 
-with st.expander("Ver tabela completa de dados"):
-    st.dataframe(df_display.sort_values(by="timestamp", ascending=False), use_container_width=True)
