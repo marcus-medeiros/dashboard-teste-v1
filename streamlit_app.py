@@ -15,10 +15,12 @@ st.set_page_config(
 
 st.title(":zap: BESS - Battery Energy Storage System")
 
-# Lista direta de cidades disponíveis
-cidades_disponiveis = ['João Pessoa', 'Campina Grande', 'Várzea',
-                      'Recife', 'Caruaru',
-                      'Natal', 'Mossoró']
+# Lista de cidades disponíveis (sem estados)
+cidades_disponiveis = [
+    'João Pessoa', 'Campina Grande', 'Várzea',
+    'Recife', 'Caruaru',
+    'Natal', 'Mossoró'
+]
 
 with st.sidebar:
     st.header("Painel de Controle BESS ⚡️")
@@ -30,16 +32,14 @@ if not opcao_cidades:
 
 lock = threading.Lock()
 
-# Estrutura para armazenar dados: {cidade: {parametro: DataFrame}}
-dados = {}
+# Estrutura para armazenar dados: dados[cidade][parametro] = DataFrame
 parametros = ['tensao', 'corrente', 'potencia']
-
-for cidade in opcao_cidades:
-    dados[cidade] = {p: pd.DataFrame(columns=['Hora', 'Valor']) for p in parametros}
+dados = {cidade: {p: pd.DataFrame(columns=['Hora', 'Valor']) for p in parametros} for cidade in opcao_cidades}
 
 def formatar_cidade(cidade):
     return cidade.lower().replace(" ", "_")
 
+# Mapear tópicos MQTT para (cidade, parametro)
 topicos_para_cidade_parametro = {}
 for cidade in opcao_cidades:
     cidade_fmt = formatar_cidade(cidade)
@@ -53,7 +53,6 @@ def on_message(client, userdata, msg):
         valor = float(msg.payload.decode())
     except:
         return
-
     agora = datetime.now()
 
     if topico in topicos_para_cidade_parametro:
@@ -90,10 +89,10 @@ def criar_grafico(df, titulo, unidade):
     ).interactive()
     return chart
 
-# Placeholder para os gráficos
+# Placeholder para atualizar gráficos sem travar o app
 placeholder = st.empty()
 
-# Atualiza a cada 1 segundo (1000 ms)
+# Atualiza os gráficos
 def atualizar():
     with placeholder.container():
         for cidade in opcao_cidades:
@@ -118,3 +117,19 @@ def atualizar():
                 col2.altair_chart(chart_corrente, use_container_width=True)
             else:
                 col2.write("Sem dados de corrente ainda.")
+
+            if chart_potencia:
+                col3.altair_chart(chart_potencia, use_container_width=True)
+            else:
+                col3.write("Sem dados de potência ainda.")
+
+            st.markdown("---")
+
+# Atualização periódica com st_autorefresh do Streamlit
+count = st.experimental_get_query_params().get("count", [0])
+count = int(count[0]) + 1
+st.experimental_set_query_params(count=count)
+
+atualizar()
+time.sleep(1)
+st.experimental_rerun()
