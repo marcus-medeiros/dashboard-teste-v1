@@ -94,7 +94,7 @@ opcao_estado = st.selectbox(
 if opcao_estado == 'PB':
     opcao_cidade = st.selectbox(
         'Selecione a cidade:',
-        ['-', 'João Pessoa', 'Campina Grande']
+        ['-', 'João Pessoa', 'Campina Grande', 'Várzea']
     )
 
 elif opcao_estado == 'PE':
