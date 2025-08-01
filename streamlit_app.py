@@ -169,7 +169,7 @@ if (grafico):
         client.connect("broker.hivemq.com", 1883, 60)
 
         # Tópico que deseja assinar (ex: "bess/energia")
-        client.subscribe("bess/energia")
+        client.subscribe("bess/telemetria/tensao")
 
         client.loop_forever()
 
@@ -189,7 +189,7 @@ if (grafico):
         time.sleep(1)
 
 broker = "broker.hivemq.com"
-topico = "bess/energia"
+topico = "bess/telemetria/corrente"
 
 for i in range(100):
     tensao = random.uniform(230.0, 210.0)  # valor entre 100V e 200V
