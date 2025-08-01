@@ -16,23 +16,16 @@ st.set_page_config(
 # Título da página
 st.title(":zap: BESS - Battery Energy Storage System")
 
-# Sidebar para seleção de estado e múltiplas cidades
+# Lista direta de cidades disponíveis
+cidades_disponiveis = ['João Pessoa', 'Campina Grande', 'Várzea',
+                      'Recife', 'Caruaru',
+                      'Natal', 'Mossoró']
+
+# Sidebar com seleção múltipla de cidades
 with st.sidebar:
     st.header("Painel de Controle BESS ⚡️")
-    opcao_estado = st.selectbox('Selecione o Estado:', ['-', 'PB', 'RN', 'PE'])
+    opcao_cidades = st.multiselect('Selecione uma ou mais cidades:', cidades_disponiveis)
 
-    cidades_por_estado = {
-        'PB': ['João Pessoa', 'Campina Grande', 'Várzea'],
-        'PE': ['Recife', 'Caruaru'],
-        'RN': ['Natal', 'Mossoró']
-    }
-
-    if opcao_estado != '-':
-        opcao_cidades = st.multiselect('Selecione uma ou mais cidades:', cidades_por_estado[opcao_estado])
-    else:
-        opcao_cidades = []
-
-# Só prossegue se ao menos uma cidade estiver selecionada
 if not opcao_cidades:
     st.info("Selecione pelo menos uma cidade para mostrar os gráficos.")
     st.stop()
@@ -46,7 +39,7 @@ parametros = ['tensao', 'corrente', 'potencia']
 for cidade in opcao_cidades:
     dados[cidade] = {p: pd.DataFrame(columns=['Hora', 'Valor']) for p in parametros}
 
-# Função para formatar tópico de forma consistente
+# Função para formatar tópico MQTT
 def formatar_cidade(cidade):
     return cidade.lower().replace(" ", "_")
 
@@ -136,5 +129,4 @@ for cidade in opcao_cidades:
 
     st.markdown("---")
 
-    # Pequena pausa para não travar o Streamlit (opcional)
     time.sleep(0.5)
