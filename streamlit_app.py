@@ -13,122 +13,106 @@ st.set_page_config(
     layout="wide"
 )
 
+# Título da página
 st.title(":zap: BESS - Battery Energy Storage System")
 
-# Lista de cidades disponíveis (sem estados)
-cidades_disponiveis = [
-    'João Pessoa', 'Campina Grande', 'Várzea',
-    'Recife', 'Caruaru',
-    'Natal', 'Mossoró'
-]
-
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("Painel de Controle BESS ⚡️")
-    opcao_cidades = st.multiselect('Selecione uma ou mais cidades:', cidades_disponiveis)
 
-if not opcao_cidades:
-    st.info("Selecione pelo menos uma cidade para mostrar os gráficos.")
-    st.stop()
+    opcao_estado = st.selectbox('Selecione o Estado:', ['-', 'PB', 'RN', 'PE'])
 
-lock = threading.Lock()
+    opcao_cidade = '-'
+    if opcao_estado == 'PB':
+        opcao_cidade = st.selectbox('Selecione a cidade:', ['-', 'João Pessoa', 'Campina Grande', 'Várzea'])
+    elif opcao_estado == 'PE':
+        opcao_cidade = st.selectbox('Selecione a cidade:', ['-', 'Recife', 'Caruaru'])
+    elif opcao_estado == 'RN':
+        opcao_cidade = st.selectbox('Selecione a cidade:', ['-', 'Natal', 'Mossoró'])
 
-# Estrutura para armazenar dados: dados[cidade][parametro] = DataFrame
-parametros = ['tensao', 'corrente', 'potencia']
-dados = {cidade: {p: pd.DataFrame(columns=['Hora', 'Valor']) for p in parametros} for cidade in opcao_cidades}
+if opcao_estado != '-' and opcao_cidade != '-':
+    st.write(f'Você selecionou: {opcao_cidade} - {opcao_estado}')
+    grafico = True
+else:
+    grafico = False
 
-def formatar_cidade(cidade):
-    return cidade.lower().replace(" ", "_")
+# --- GERAÇÃO DOS GRÁFICOS ---
+if grafico:
+    # Estrutura de dados
+    dados = {
+        'tensao': pd.DataFrame(columns=['Hora', 'Valor']),
+        'corrente': pd.DataFrame(columns=['Hora', 'Valor']),
+        'potencia': pd.DataFrame(columns=['Hora', 'Valor'])
+    }
 
-# Mapear tópicos MQTT para (cidade, parametro)
-topicos_para_cidade_parametro = {}
-for cidade in opcao_cidades:
-    cidade_fmt = formatar_cidade(cidade)
-    for parametro in parametros:
-        topico = f"bess/telemetria/{cidade_fmt}/{parametro}"
-        topicos_para_cidade_parametro[topico] = (cidade, parametro)
+    # Mapeia tópicos para nomes
+    cidade_formatada = opcao_cidade.lower().replace(" ", "_")  # ex: "João Pessoa" → "joão_pessoa"
+    topicos = {
+        f"bess/telemetria/{cidade_formatada}/tensao": "tensao",
+        f"bess/telemetria/{cidade_formatada}/corrente": "corrente",
+        f"bess/telemetria/{cidade_formatada}/potencia": "potencia"
+    }
 
-def on_message(client, userdata, msg):
-    topico = msg.topic
-    try:
-        valor = float(msg.payload.decode())
-    except:
-        return
-    agora = datetime.now()
+    lock = threading.Lock()
 
-    if topico in topicos_para_cidade_parametro:
-        cidade, parametro = topicos_para_cidade_parametro[topico]
-        with lock:
-            nova_linha = pd.DataFrame({'Hora': [agora], 'Valor': [valor]})
-            dados[cidade][parametro] = pd.concat([dados[cidade][parametro], nova_linha], ignore_index=True)
-            if len(dados[cidade][parametro]) > 100:
-                dados[cidade][parametro] = dados[cidade][parametro].iloc[-100:]
+    # Callback do MQTT
+    def on_message(client, userdata, msg):
+        topico = msg.topic
+        try:
+            valor = float(msg.payload.decode())
+        except:
+            return
+        agora = datetime.now()
 
-def iniciar_mqtt():
-    client = mqtt.Client()
-    client.on_message = on_message
-    client.connect("test.mosquitto.org", 1883, 60)
-    for topico in topicos_para_cidade_parametro.keys():
-        client.subscribe(topico)
-    client.loop_forever()
-
-threading.Thread(target=iniciar_mqtt, daemon=True).start()
-
-def criar_grafico(df, titulo, unidade):
-    if df.empty:
-        return None
-    df_plot = df.tail(50).copy()
-    df_plot['Hora'] = pd.to_datetime(df_plot['Hora'])
-    chart = alt.Chart(df_plot).mark_line().encode(
-        x=alt.X('Hora:T', title='Hora'),
-        y=alt.Y('Valor:Q', title=unidade),
-        tooltip=[alt.Tooltip('Hora:T', title='Hora'), alt.Tooltip('Valor:Q', title=unidade)]
-    ).properties(
-        title=titulo,
-        width=300,
-        height=250
-    ).interactive()
-    return chart
-
-# Placeholder para atualizar gráficos sem travar o app
-placeholder = st.empty()
-
-# Atualiza os gráficos
-def atualizar():
-    with placeholder.container():
-        for cidade in opcao_cidades:
-            st.subheader(f"📍 Cidade: {cidade}")
-            col1, col2, col3 = st.columns(3)
-
+        if topico in topicos:
+            parametro = topicos[topico]
             with lock:
-                df_tensao = dados[cidade]['tensao']
-                df_corrente = dados[cidade]['corrente']
-                df_potencia = dados[cidade]['potencia']
+                nova_linha = pd.DataFrame({'Hora': [agora], 'Valor': [valor]})
+                dados[parametro] = pd.concat([dados[parametro], nova_linha], ignore_index=True)
 
-            chart_tensao = criar_grafico(df_tensao, "Tensão", "Volts (V)")
-            chart_corrente = criar_grafico(df_corrente, "Corrente", "Ampères (A)")
-            chart_potencia = criar_grafico(df_potencia, "Potência", "Kilowatts (kW)")
+                if len(dados[parametro]) > 100:
+                    dados[parametro] = dados[parametro].iloc[-100:]
 
-            if chart_tensao:
-                col1.altair_chart(chart_tensao, use_container_width=True)
-            else:
-                col1.write("Sem dados de tensão ainda.")
+    # Thread MQTT
+    def iniciar_mqtt():
+        client = mqtt.Client()
+        client.on_message = on_message
+        client.connect("test.mosquitto.org", 1883, 60)
 
-            if chart_corrente:
-                col2.altair_chart(chart_corrente, use_container_width=True)
-            else:
-                col2.write("Sem dados de corrente ainda.")
+        for t in topicos:
+            client.subscribe(t)
 
-            if chart_potencia:
-                col3.altair_chart(chart_potencia, use_container_width=True)
-            else:
-                col3.write("Sem dados de potência ainda.")
+        client.loop_forever()
 
-            st.markdown("---")
+    threading.Thread(target=iniciar_mqtt, daemon=True).start()
 
-# Atualização periódica com st_autorefresh do Streamlit
-count = st.experimental_get_query_params().get("count", [0])
-count = int(count[0]) + 1
-st.experimental_set_query_params(count=count)
+    # Cria colunas para os gráficos
+    col1, col2, col3 = st.columns(3)
+    grafico_tensao = col1.empty()
+    grafico_corrente = col2.empty()
+    grafico_potencia = col3.empty()
 
-atualizar()
-time.sleep(1)
+    # Loop de atualização dos gráficos
+    while True:
+        with lock:
+            for parametro, area, titulo, unidade in zip(
+                ['tensao', 'corrente', 'potencia'],
+                [grafico_tensao, grafico_corrente, grafico_potencia],
+                ['Tensão', 'Corrente', 'Potência'],
+                ['Volts (V)', 'Ampères (A)', 'Kilowatts (kW)']
+            ):
+                df = dados[parametro]
+                if not df.empty:
+                    df_plot = df.tail(50).copy()
+                    df_plot['Hora'] = pd.to_datetime(df_plot['Hora'])
+                    chart = alt.Chart(df_plot).mark_line().encode(
+                        x=alt.X('Hora:T', title='Hora'),
+                        y=alt.Y('Valor:Q', title=unidade),
+                        tooltip=[alt.Tooltip('Hora:T', title='Hora'), alt.Tooltip('Valor:Q', title=unidade)],
+                    ).properties(
+                        title=titulo,
+                        width=300,
+                        height=250
+                    ).interactive()
+                    area.altair_chart(chart, use_container_width=True)
+        time.sleep(1)
