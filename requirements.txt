@@ -3,4 +3,3 @@ pandas
 plotly
 paho-mqtt
 streamlit-autorefresh
-matplotlib
