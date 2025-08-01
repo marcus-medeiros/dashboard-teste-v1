@@ -80,7 +80,7 @@ if not st.session_state.mqtt_started:
 
 # --- 5. INTERFACE STREAMLIT ---
 st.set_page_config(page_title="BESS - Dashboard Multi-Tópico", page_icon="📊", layout="wide")
-st.title("📊 Dashboard BESS - Monitoramento Multi-Parâmetro")
+st.title("📊 Dashboard BESS - Monitoramento")
 
 st.sidebar.header("Configurações do Gráfico")
 parametro_selecionado = st.sidebar.selectbox(
