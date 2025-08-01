@@ -1,226 +1,94 @@
+# Arquivo: dashboard_app.py
+# Descrição: Dashboard para visualizar os dados de energia do BESS a partir de um banco de dados SQLite.
+
 import streamlit as st
 import pandas as pd
-from pathlib import Path
-
-from datetime import datetime
-import time
-import threading
-import paho.mqtt.client as mqtt
+import sqlite3
 import plotly.graph_objects as go
-from datetime import datetime, timedelta  # <== adicionar timedelta
+from datetime import datetime, timedelta
 
+# --- Configurações ---
+DB_FILE = "dados_energia.db"
 
-
-# Definições do broker MQTT
-MQTT_BROKER = "broker.hivemq.com"
-MQTT_PORT = 1883
-MQTT_TOPIC = "bess/energia"
-
-# git add .
-# git commit -m "Descreva o que foi alterado aqui"
-# git push
-
-
-# Set the title and favicon that appear in the Browser's tab bar.
+# Configuração da página do Streamlit
 st.set_page_config(
-    page_title='BESS - Gerenciamento', #Tag da URL
-    page_icon=':zap:', # Emoji da URL
+    page_title='Dashboard BESS',
+    page_icon='🔋',
+    layout='wide'
 )
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+def fetch_data(minutes_ago=10):
+    """Busca dados do banco de dados dos últimos X minutos."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            time_filter = (datetime.now() - timedelta(minutes=minutes_ago)).isoformat()
+            query = f"SELECT timestamp, valor FROM energia WHERE timestamp >= '{time_filter}' ORDER BY timestamp ASC"
+            df = pd.read_sql_query(query, conn)
+            if not df.empty:
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+            return df
+    except Exception as e:
+        st.error(f"Não foi possível ler o banco de dados. O coletor está rodando? Erro: {e}")
+        return pd.DataFrame({'timestamp': [], 'valor': []})
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+# --- Layout do Dashboard ---
+st.title("🔋 Dashboard de Monitoramento BESS")
+st.markdown(f"Exibindo dados em tempo real. Atualizado pela última vez em: `{datetime.now().strftime('%H:%M:%S')}`")
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+minutes = st.sidebar.slider("Ver dados dos últimos (minutos):", 1, 120, 10)
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+df = fetch_data(minutes_ago=minutes)
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2000
+if df.empty:
+    st.warning("Aguardando dados... Verifique se o simulador e o coletor estão em execução.")
+else:
+    # --- Métricas Principais ---
+    st.subheader("Métricas Atuais")
+    last_power = df['valor'].iloc[-1]
+    avg_power = df['valor'].mean()
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Potência Atual", f"{last_power:.2f} kW")
+    col2.metric("Potência Média (período)", f"{avg_power:.2f} kW")
+
+    # Determina o status com base no valor da potência
+    if last_power < -5:
+        status_text = "Carregando"
+        status_emoji = "🔌"
+    elif last_power > 5:
+        status_text = "Descarregando"
+        status_emoji = "⚡"
+    else:
+        status_text = "Ocioso"
+        status_emoji = " standby" # Emoji de espera, ou pode usar 💤
+    col3.metric("Status Atual", f"{status_text} {status_emoji}")
+
+    st.write("---")
+
+    # --- Gráfico Principal ---
+    st.subheader(f"Histórico de Potência ({minutes} min)")
+    fig = go.Figure()
+    
+    # Adiciona linha de potência
+    fig.add_trace(go.Scatter(
+        x=df['timestamp'],
+        y=df['valor'],
+        mode='lines',
+        name='Potência',
+        line=dict(color='deepskyblue', width=3),
+        fill='tozeroy' # Preenche a área abaixo da linha
+    ))
+
+    fig.update_layout(
+        xaxis_title='Horário',
+        yaxis_title='Potência (kW)',
+        hovermode='x unified',
+        height=500,
+        yaxis_zeroline=True, 
+        yaxis_zerolinewidth=2, 
+        yaxis_zerolinecolor='rgba(255,0,0,0.5)' # Linha vermelha no zero para ver carga/descarga
     )
+    st.plotly_chart(fig, use_container_width=True)
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
-
-    return gdp_df
-
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-#st.image("Logo-Baterias-Moura.png", width=200)
-'''
-# :zap: BESS - Battery Energy Storage System
-
-Este projeto poderá servir como base para pesquisas, desenvolvimento de projetos de 
-engenharia elétrica/energia, e implementação prática de soluções baseadas em 
-armazenamento energético.
-'''
-
-# Inicializa o session_state AQUI, no início e fora de qualquer condicional.
-if "timestamps" not in st.session_state:
-    st.session_state.timestamps = []
-if "values" not in st.session_state:
-    st.session_state.values = []
-
-
-# Add some spacing
-''
-''
-
-opcao_estado = st.selectbox(
-    'Selecione o BESS:',
-    ['-', 'PB', 'RN', 'PE']
-)
-
-if opcao_estado == 'PB':
-    opcao_cidade = st.selectbox(
-        'Selecione a cidade:',
-        ['-', 'João Pessoa', 'Campina Grande', 'Várzea']
-    )
-
-elif opcao_estado == 'PE':
-    opcao_cidade = st.selectbox(
-        'Selecione a cidade:',
-        ['-', 'Recife', 'Caruaru']
-    )
-
-elif opcao_estado == 'RN':
-    opcao_cidade = st.selectbox(
-        'Selecione a cidade:',
-        ['-', 'Natal', 'Mossoró']
-    )
-
-# Exemplo extra (opcional): se quiser mostrar a escolha
-if opcao_estado != '-' and opcao_cidade != '-':
-    st.write(f'Você selecionou: {opcao_cidade} - {opcao_estado}')
-    grafico = True
-else: grafico = False
-
-''
-''
-''
-
-
-
-
-if (grafico):
-    # As funções MQTT e a lógica do gráfico continuam aqui
-    # Não precisa mais inicializar o session_state aqui dentro.
-
-    # Funções MQTT
-    def on_connect(client, userdata, flags, rc):
-        client.subscribe(MQTT_TOPIC)
-
-    # Substitua sua função on_message por esta versão mais robusta:
-    def on_message(client, userdata, msg):
-        try:
-            # Decodifica o payload e remove espaços em branco extras
-            payload_str = msg.payload.decode().strip()
-
-            # Só prossiga se o payload não for uma string vazia
-            if payload_str:
-                valor = float(payload_str)
-                agora = datetime.now()
-
-                st.session_state.timestamps.append(agora)
-                st.session_state.values.append(valor)
-
-                # Mantém apenas os últimos 60 segundos
-                limite = agora - timedelta(seconds=60)
-                while st.session_state.timestamps and st.session_state.timestamps[0] < limite:
-                    st.session_state.timestamps.pop(0)
-                    st.session_state.values.pop(0)
-                    
-        # Captura o erro específico se a conversão para float falhar
-        except ValueError:
-            # Opcional: imprima no terminal do Streamlit para ver mensagens problemáticas
-            print(f"AVISO: Não foi possível converter a mensagem MQTT para float: '{msg.payload.decode()}'")
-        except Exception as e:
-            # Captura qualquer outro erro inesperado
-            print(f"ERRO inesperado na função on_message: {e}")
-
-    def start_mqtt():
-        client = mqtt.Client()
-        client.on_connect = on_connect
-        client.on_message = on_message
-        client.connect(MQTT_BROKER, MQTT_PORT, 60)
-        client.loop_forever()
-
-    # Inicia o cliente MQTT em uma thread
-    if "mqtt_thread" not in st.session_state:
-        mqtt_thread = threading.Thread(target=start_mqtt)
-        mqtt_thread.daemon = True
-        mqtt_thread.start()
-        st.session_state.mqtt_thread = mqtt_thread
-
-    st.title("Gráfico MQTT em tempo real (últimos 60s)")
-    placeholder = st.empty()
-
-    while True:
-        # --- INÍCIO DA CORREÇÃO ---
-        # Verificação de segurança para garantir que as variáveis de sessão são listas
-        if isinstance(st.session_state.values, list) and isinstance(st.session_state.timestamps, list):
-            x_data = list(st.session_state.timestamps)
-            y_data = list(st.session_state.values)
-        else:
-            # Se uma das variáveis foi corrompida (não é mais uma lista),
-            # usamos listas vazias para não quebrar o gráfico e mostramos um aviso.
-            x_data, y_data = [], []
-            st.warning("Fluxo de dados interrompido. Verifique se há uma reatribuição indevida da variável `st.session_state.values` no código.")
-        # --- FIM DA CORREÇÃO ---
-
-        with placeholder.container():
-            fig = go.Figure()
-            
-            # Use as cópias seguras dos dados
-            fig.add_trace(go.Scatter(
-                x=x_data,
-                y=y_data,
-                mode="lines+markers",
-                line=dict(color="blue")
-            ))
-            
-            fig.update_layout(
-                xaxis_title="Tempo",
-                yaxis_title="Potência (kW)",
-                yaxis=dict(autorange=True),
-                height=400
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            time.sleep(1)
-
+# Força o Streamlit a recarregar a página a cada 10 segundos para buscar novos dados
+st.rerun(ttl=10)
