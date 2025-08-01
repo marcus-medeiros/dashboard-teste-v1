@@ -1,4 +1,4 @@
-# Arquivo: dashboard_realtime.py (Versão Corrigida e Resiliente)
+# Arquivo: dashboard_realtime.py (Versão Final Corrigida)
 
 import streamlit as st
 import pandas as pd
@@ -34,7 +34,6 @@ def on_message(client, userdata, msg):
         valor = float(msg.payload.decode('utf-8'))
         agora = datetime.now()
         
-        # Garante que estamos trabalhando com listas, mesmo que algo tenha corrompido o estado
         if not isinstance(st.session_state.values, list):
              st.session_state.values = []
         if not isinstance(st.session_state.timestamps, list):
@@ -71,21 +70,15 @@ st.markdown(f"Exibindo dados do tópico `{MQTT_TOPIC}` nos últimos {DATA_WINDOW
 
 placeholder = st.empty()
 
-# ***** INÍCIO DA CORREÇÃO PRINCIPAL *****
-# Adicionamos uma verificação para garantir que st.session_state.values é uma lista antes de usá-la.
 if isinstance(st.session_state.values, list):
     current_values = list(st.session_state.values)
     current_timestamps = list(st.session_state.timestamps)
 else:
-    # Se a variável foi corrompida, a gente define como lista vazia para não quebrar a aplicação
-    # e tenta corrigir o estado para a próxima execução.
     current_values = []
     current_timestamps = []
     st.session_state.values = []
     st.session_state.timestamps = []
     st.error("O estado dos dados foi corrompido e resetado. Verifique o código por atribuições indevidas.")
-# ***** FIM DA CORREÇÃO PRINCIPAL *****
-
 
 with placeholder.container():
     col1, col2 = st.columns(2)
@@ -104,4 +97,6 @@ with placeholder.container():
                       xaxis=dict(range=[datetime.now() - timedelta(seconds=DATA_WINDOW_SECONDS), datetime.now()]))
     st.plotly_chart(fig, use_container_width=True)
 
-st.rerun(ttl=1)
+
+# CORREÇÃO: st.rerun() não aceita o argumento ttl. A chamada correta é sem argumentos.
+st.rerun()
