@@ -22,52 +22,12 @@ st.set_page_config(
 # -----------------------------------------------------------------------------
 # Declare some useful functions.
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
-
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
-
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
-
-    MIN_YEAR = 1960
-    MAX_YEAR = 2000
-
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
-
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
-
-    return gdp_df
-
-gdp_df = get_gdp_data()
+broker = "broker.hivemq.com"
+topicos = {
+    "tensao": "bess/tensao",
+    "corrente": "bess/corrente",
+    "potencia": "bess/potencia",
+}
 
 # -----------------------------------------------------------------------------
 # Draw the actual page
@@ -190,12 +150,17 @@ if (grafico):
 
 
 def publisher_loop():
-    broker = "broker.hivemq.com"
-    topico = "bess/energia"
     while True:
-        tensao = random.uniform(210.0, 230.0)
-        publish.single(topico, str(tensao), hostname=broker)
+        tensao = round(random.uniform(210, 230), 2)      # V
+        corrente = round(random.uniform(10, 50), 2)      # A
+        potencia = round(tensao * corrente * 0.9, 2)     # kW (considerando fator potência 0.9)
+        
+        publish.single(topicos["tensao"], str(tensao), hostname=broker)
+        publish.single(topicos["corrente"], str(corrente), hostname=broker)
+        publish.single(topicos["potencia"], str(potencia), hostname=broker)
+
         time.sleep(3)
+
 
 threading.Thread(target=publisher_loop, daemon=True).start()
 
