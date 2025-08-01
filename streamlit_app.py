@@ -6,113 +6,152 @@ import time
 import paho.mqtt.client as mqtt
 import altair as alt
 
-# Configuração da página
+# --- Configuração da Página ---
 st.set_page_config(
     page_title='BESS - Gerenciamento',
     page_icon=':zap:',
     layout="wide"
 )
 
-# Título da página
+# --- Título ---
 st.title(":zap: BESS - Battery Energy Storage System")
 
-# --- SIDEBAR ---
+# --- SIDEBAR: SELEÇÃO DE CIDADES ---
 with st.sidebar:
     st.header("Painel de Controle BESS ⚡️")
 
-    opcao_estado = st.selectbox('Selecione o Estado:', ['-', 'PB', 'RN', 'PE'])
+    # Lista de todas as cidades disponíveis para seleção
+    cidades_disponiveis = [
+        'João Pessoa', 'Campina Grande', 'Várzea',  # PB
+        'Recife', 'Caruaru',                         # PE
+        'Natal', 'Mossoró'                           # RN
+    ]
 
-    opcao_cidade = '-'
-    if opcao_estado == 'PB':
-        opcao_cidade = st.selectbox('Selecione a cidade:', ['-', 'João Pessoa', 'Campina Grande', 'Várzea'])
-    elif opcao_estado == 'PE':
-        opcao_cidade = st.selectbox('Selecione a cidade:', ['-', 'Recife', 'Caruaru'])
-    elif opcao_estado == 'RN':
-        opcao_cidade = st.selectbox('Selecione a cidade:', ['-', 'Natal', 'Mossoró'])
+    # Modificado para multiselect, permitindo escolher até 2 cidades
+    cidades_selecionadas = st.multiselect(
+        'Selecione até 2 cidades para monitorar:',
+        options=cidades_disponiveis,
+        default=[],
+        max_selections=2,
+        key='cidades_multiselect'
+    )
 
-if opcao_estado != '-' and opcao_cidade != '-':
-    st.write(f'Você selecionou: {opcao_cidade} - {opcao_estado}')
-    grafico = True
-else:
-    grafico = False
+# --- LÓGICA PRINCIPAL ---
+if cidades_selecionadas:
+    # Estrutura de dados aninhada para armazenar dados de múltiplas cidades
+    # Formato: { 'cidade_1': {'tensao': df, 'corrente': df}, 'cidade_2': ... }
+    if 'dados' not in st.session_state or st.session_state.get('cidades_monitoradas') != cidades_selecionadas:
+        st.session_state.dados = {
+            cidade.lower().replace(" ", "_"): {
+                'tensao': pd.DataFrame(columns=['Hora', 'Valor']),
+                'corrente': pd.DataFrame(columns=['Hora', 'Valor']),
+                'potencia': pd.DataFrame(columns=['Hora', 'Valor'])
+            } for cidade in cidades_selecionadas
+        }
+        st.session_state.cidades_monitoradas = cidades_selecionadas
 
-# --- GERAÇÃO DOS GRÁFICOS ---
-if grafico:
-    # Estrutura de dados
-    dados = {
-        'tensao': pd.DataFrame(columns=['Hora', 'Valor']),
-        'corrente': pd.DataFrame(columns=['Hora', 'Valor']),
-        'potencia': pd.DataFrame(columns=['Hora', 'Valor'])
-    }
+    # Gera a lista completa de tópicos MQTT para todas as cidades selecionadas
+    topicos_a_subscrever = []
+    for cidade in cidades_selecionadas:
+        cidade_formatada = cidade.lower().replace(" ", "_")
+        for parametro in ['tensao', 'corrente', 'potencia']:
+            topicos_a_subscrever.append(f"bess/telemetria/{cidade_formatada}/{parametro}")
 
-    # Mapeia tópicos para nomes
-    cidade_formatada = opcao_cidade.lower().replace(" ", "_")  # ex: "João Pessoa" → "joão_pessoa"
-    topicos = {
-        f"bess/telemetria/{cidade_formatada}/tensao": "tensao",
-        f"bess/telemetria/{cidade_formatada}/corrente": "corrente",
-        f"bess/telemetria/{cidade_formatada}/potencia": "potencia"
-    }
-
+    # Lock para garantir a segurança do acesso concorrente aos dados
     lock = threading.Lock()
 
-    # Callback do MQTT
+    # Callback do MQTT: agora inteligente para rotear os dados para a cidade correta
     def on_message(client, userdata, msg):
         topico = msg.topic
         try:
+            # Extrai cidade e parâmetro do tópico: "bess/telemetria/joao_pessoa/tensao"
+            partes_topico = topico.split('/')
+            cidade_topico = partes_topico[2]
+            parametro_topico = partes_topico[3]
             valor = float(msg.payload.decode())
-        except:
+        except (IndexError, ValueError):
+            # Ignora mensagens mal formatadas ou com payload inválido
             return
+
         agora = datetime.now()
 
-        if topico in topicos:
-            parametro = topicos[topico]
+        # Verifica se a mensagem é de uma cidade monitorada
+        if cidade_topico in st.session_state.dados:
             with lock:
+                df_alvo = st.session_state.dados[cidade_topico][parametro_topico]
                 nova_linha = pd.DataFrame({'Hora': [agora], 'Valor': [valor]})
-                dados[parametro] = pd.concat([dados[parametro], nova_linha], ignore_index=True)
+                
+                # Adiciona nova linha e mantém o DataFrame com no máximo 100 pontos
+                df_atualizado = pd.concat([df_alvo, nova_linha], ignore_index=True)
+                st.session_state.dados[cidade_topico][parametro_topico] = df_atualizado.tail(100)
 
-                if len(dados[parametro]) > 100:
-                    dados[parametro] = dados[parametro].iloc[-100:]
-
-    # Thread MQTT
+    # Função para rodar o cliente MQTT em uma thread separada
     def iniciar_mqtt():
-        client = mqtt.Client()
+        # Especifica a versão da API de callback para compatibilidade com paho-mqtt > 2.0
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
         client.on_message = on_message
         client.connect("test.mosquitto.org", 1883, 60)
-
-        for t in topicos:
+        for t in topicos_a_subscrever:
             client.subscribe(t)
-
         client.loop_forever()
 
-    threading.Thread(target=iniciar_mqtt, daemon=True).start()
+    # Inicia a thread MQTT apenas uma vez usando o st.session_state
+    if 'mqtt_thread_started' not in st.session_state or st.session_state.get('cidades_monitoradas') != cidades_selecionadas:
+        # Se a seleção de cidades mudar, uma nova thread será necessária (simplificação)
+        # Em um app real, seria melhor gerenciar a mesma thread, alterando as subscrições.
+        thread = threading.Thread(target=iniciar_mqtt, daemon=True)
+        thread.start()
+        st.session_state.mqtt_thread_started = True
 
-    # Cria colunas para os gráficos
-    col1, col2, col3 = st.columns(3)
-    grafico_tensao = col1.empty()
-    grafico_corrente = col2.empty()
-    grafico_potencia = col3.empty()
+    # --- GERAÇÃO DOS GRÁFICOS ---
+    
+    # Cria colunas principais, uma para cada cidade selecionada
+    cols_cidades = st.columns(len(cidades_selecionadas))
 
-    # Loop de atualização dos gráficos
+    # Dicionário para armazenar os placeholders dos gráficos
+    placeholders = {}
+
+    for i, cidade in enumerate(cidades_selecionadas):
+        cidade_formatada = cidade.lower().replace(" ", "_")
+        with cols_cidades[i]:
+            st.subheader(f"Telemetria de {cidade}")
+            placeholders[cidade_formatada] = {
+                'tensao': st.empty(),
+                'corrente': st.empty(),
+                'potencia': st.empty()
+            }
+
+    # Loop de atualização contínua dos gráficos
     while True:
         with lock:
-            for parametro, area, titulo, unidade in zip(
-                ['tensao', 'corrente', 'potencia'],
-                [grafico_tensao, grafico_corrente, grafico_potencia],
-                ['Tensão', 'Corrente', 'Potência'],
-                ['Volts (V)', 'Ampères (A)', 'Kilowatts (kW)']
-            ):
-                df = dados[parametro]
-                if not df.empty:
-                    df_plot = df.tail(50).copy()
-                    df_plot['Hora'] = pd.to_datetime(df_plot['Hora'])
-                    chart = alt.Chart(df_plot).mark_line().encode(
-                        x=alt.X('Hora:T', title='Hora'),
-                        y=alt.Y('Valor:Q', title=unidade),
-                        tooltip=[alt.Tooltip('Hora:T', title='Hora'), alt.Tooltip('Valor:Q', title=unidade)],
-                    ).properties(
-                        title=titulo,
-                        width=300,
-                        height=250
-                    ).interactive()
-                    area.altair_chart(chart, use_container_width=True)
+            for cidade_formatada, graficos_cidade in placeholders.items():
+                for parametro, area in graficos_cidade.items():
+                    df = st.session_state.dados[cidade_formatada][parametro]
+                    if not df.empty:
+                        # Mapeia o nome do parâmetro para o título e unidade
+                        info_parametro = {
+                            'tensao': ('Tensão', 'Volts (V)'),
+                            'corrente': ('Corrente', 'Ampères (A)'),
+                            'potencia': ('Potência', 'Kilowatts (kW)')
+                        }
+                        titulo, unidade = info_parametro[parametro]
+                        
+                        df_plot = df.copy()
+                        df_plot['Hora'] = pd.to_datetime(df_plot['Hora'])
+
+                        chart = alt.Chart(df_plot).mark_line().encode(
+                            x=alt.X('Hora:T', title='Hora'),
+                            y=alt.Y('Valor:Q', title=unidade, scale=alt.Scale(zero=False)),
+                            tooltip=[
+                                alt.Tooltip('Hora:T', format='%H:%M:%S', title='Hora'),
+                                alt.Tooltip('Valor:Q', format='.2f', title=unidade)
+                            ],
+                        ).properties(
+                            title=titulo
+                        ).interactive()
+                        
+                        area.altair_chart(chart, use_container_width=True)
         time.sleep(1)
+else:
+    st.info("⬅️ Por favor, selecione uma ou duas cidades no painel à esquerda para iniciar o monitoramento.")
+
