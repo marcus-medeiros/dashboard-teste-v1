@@ -59,4 +59,9 @@ if not df.empty:
     col1.metric("SOC Atual", f"{df['soc'].iloc[-1]:.2f} %")
     col2.metric("Potência", f"{df['potencia'].iloc[-1]:.2f} kW")
     col3.metric("Tensão", f"{df['tensao'].iloc[-1]:.2f} V")
-    col4.metric("Co
+    col4.metric("Corrente", f"{df['corrente'].iloc[-1]:.2f} A")
+
+st.line_chart(df.set_index("timestamp")[["potencia", "soc"]])
+
+with st.expander("Ver tabela completa"):
+    st.dataframe(df[::-1], use_container_width=True)
