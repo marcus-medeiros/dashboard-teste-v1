@@ -52,7 +52,6 @@ if cidades_selecionadas:
             } for cidade in cidades_selecionadas
         }
         st.session_state.cidades_monitoradas = cidades_selecionadas
-        # Limpa o erro de conexão se a seleção mudar
         if 'mqtt_connection_error' in st.session_state:
             del st.session_state['mqtt_connection_error']
 
@@ -66,7 +65,7 @@ if cidades_selecionadas:
 
     lock = threading.Lock()
 
-    # Callback do MQTT (Não alterado)
+    # Callback do MQTT (Tornado mais robusto)
     def on_message(client, userdata, msg):
         topico = msg.topic
         try:
@@ -77,21 +76,22 @@ if cidades_selecionadas:
             return
 
         agora = datetime.now()
-        if cidade_topico in st.session_state.dados:
-            with lock:
+        with lock:
+            # FIX: Verifica se a estrutura de dados ainda existe antes de escrever nela
+            if 'dados' in st.session_state and cidade_topico in st.session_state.dados:
                 df_alvo = st.session_state.dados[cidade_topico][parametro_topico]
                 nova_linha = pd.DataFrame({'Hora': [agora], 'Valor': [valor]})
                 df_atualizado = pd.concat([df_alvo, nova_linha], ignore_index=True)
                 st.session_state.dados[cidade_topico][parametro_topico] = df_atualizado.tail(100)
 
-    # Função para rodar o cliente MQTT (com tratamento de erro)
+    # Função para rodar o cliente MQTT (com tratamento de erro e API atualizada)
     def iniciar_mqtt():
         try:
-            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+            # FIX: Atualizado para a API recomendada para evitar DeprecationWarning
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
             client.on_message = on_message
             client.connect("test.mosquitto.org", 1883, 60)
             
-            # Limpa erro anterior se a conexão for bem sucedida
             if 'mqtt_connection_error' in st.session_state:
                 del st.session_state['mqtt_connection_error']
 
@@ -104,14 +104,15 @@ if cidades_selecionadas:
             st.session_state.mqtt_connection_error = f"Ocorreu um erro inesperado no MQTT: {e}"
 
 
-    # Função para simular a chegada de dados (com correção para race condition)
-    def iniciar_simulador():
+    # Função para simular a chegada de dados (Refatorada para ser mais segura)
+    def iniciar_simulador(cidades_a_simular, lock_obj):
         while True:
-            # FIX: Verifica se 'dados' já foi inicializado antes de usá-lo
-            if 'dados' in st.session_state:
-                with lock:
-                    for cidade_nome_amigavel in cidades_selecionadas:
+            with lock_obj:
+                # FIX: Verifica se 'dados' existe no session_state antes de usá-lo
+                if 'dados' in st.session_state:
+                    for cidade_nome_amigavel in cidades_a_simular:
                         cidade_formatada = cidade_nome_amigavel.lower().replace(" ", "_")
+                        # FIX: Verifica se a chave da cidade específica ainda existe
                         if cidade_formatada in st.session_state.dados:
                             agora = datetime.now()
                             dados_cidade = st.session_state.dados[cidade_formatada]
@@ -132,22 +133,25 @@ if cidades_selecionadas:
                             ], ignore_index=True).tail(100)
             time.sleep(2)
 
-    # Inicia a thread (MQTT ou Simulador) apenas uma vez
+    # Inicia a thread (MQTT ou Simulador) apenas uma vez por seleção
     session_key = f"thread_started_{'sim' if usar_simulador else 'mqtt'}_{'_'.join(sorted(cidades_selecionadas))}"
     if session_key not in st.session_state:
         for key in list(st.session_state.keys()):
             if key.startswith('thread_started_'):
                 del st.session_state[key]
 
-        target_func = iniciar_simulador if usar_simulador else iniciar_mqtt
-        thread = threading.Thread(target=target_func, daemon=True)
+        if usar_simulador:
+            # FIX: Passa a lista de cidades como argumento para a thread
+            thread = threading.Thread(target=iniciar_simulador, args=(cidades_selecionadas.copy(), lock), daemon=True)
+        else:
+            thread = threading.Thread(target=iniciar_mqtt, daemon=True)
+        
         thread.start()
         st.session_state[session_key] = True
 
     # --- GERAÇÃO DOS GRÁFICOS ---
     st.header("Comparativos em Tempo Real")
     
-    # Mostra erro de conexão MQTT se houver
     if 'mqtt_connection_error' in st.session_state:
         st.error(st.session_state.mqtt_connection_error)
 
