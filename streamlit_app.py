@@ -96,7 +96,7 @@ if "timestamps" not in st.session_state:
 if "values" not in st.session_state:
     st.session_state.values = []
 
-    
+
 # Add some spacing
 ''
 ''
@@ -145,20 +145,33 @@ if (grafico):
     def on_connect(client, userdata, flags, rc):
         client.subscribe(MQTT_TOPIC)
 
+    # Substitua sua função on_message por esta versão mais robusta:
     def on_message(client, userdata, msg):
         try:
-            valor = float(msg.payload.decode())
-            agora = datetime.now()
-            st.session_state.timestamps.append(agora)
-            st.session_state.values.append(valor)
-            
-            # Mantém apenas os últimos 60 segundos
-            limite = agora - timedelta(seconds=60)
-            while st.session_state.timestamps and st.session_state.timestamps[0] < limite:
-                st.session_state.timestamps.pop(0)
-                st.session_state.values.pop(0)
-        except:
-            pass
+            # Decodifica o payload e remove espaços em branco extras
+            payload_str = msg.payload.decode().strip()
+
+            # Só prossiga se o payload não for uma string vazia
+            if payload_str:
+                valor = float(payload_str)
+                agora = datetime.now()
+
+                st.session_state.timestamps.append(agora)
+                st.session_state.values.append(valor)
+
+                # Mantém apenas os últimos 60 segundos
+                limite = agora - timedelta(seconds=60)
+                while st.session_state.timestamps and st.session_state.timestamps[0] < limite:
+                    st.session_state.timestamps.pop(0)
+                    st.session_state.values.pop(0)
+                    
+        # Captura o erro específico se a conversão para float falhar
+        except ValueError:
+            # Opcional: imprima no terminal do Streamlit para ver mensagens problemáticas
+            print(f"AVISO: Não foi possível converter a mensagem MQTT para float: '{msg.payload.decode()}'")
+        except Exception as e:
+            # Captura qualquer outro erro inesperado
+            print(f"ERRO inesperado na função on_message: {e}")
 
     def start_mqtt():
         client = mqtt.Client()
@@ -183,21 +196,28 @@ if (grafico):
     # Loop para redesenhar o gráfico
     while True:
         with placeholder.container():
+            # Crie cópias das listas para garantir consistência no momento da renderização
+            # Isso também previne que dados ruins cheguem ao Plotly
+            x_data = list(st.session_state.timestamps)
+            y_data = list(st.session_state.values)
+
             fig = go.Figure()
+            
+            # Use as cópias dos dados para plotar
             fig.add_trace(go.Scatter(
-                x=st.session_state.timestamps,
-                y=st.session_state.values,
+                x=x_data,
+                y=y_data,
                 mode="lines+markers",
                 line=dict(color="blue")
             ))
+            
             fig.update_layout(
                 xaxis_title="Tempo",
-                yaxis_title="Potência (kW)", # Exemplo de unidade
-                # O range do eixo X se ajusta dinamicamente com os dados
-                yaxis=dict(autorange=True), 
+                yaxis_title="Potência (kW)",
+                yaxis=dict(autorange=True),
                 height=400
             )
+            
             st.plotly_chart(fig, use_container_width=True)
-            time.sleep(1) # Atualiza a cada 1 segundo
-
+            time.sleep(1)
 
