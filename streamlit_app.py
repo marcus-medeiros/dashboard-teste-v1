@@ -1,169 +1,150 @@
+# Arquivo: dashboard_app.py
+# Descrição: Recebe dados de múltiplos tópicos MQTT (tensão, corrente, potência)
+#            e exibe em um dashboard interativo com seleção de gráfico.
+
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
-import numpy as np
-
-from datetime import datetime
-import time
-import threading
+import plotly.graph_objects as go
 import paho.mqtt.client as mqtt
+import threading
+from datetime import datetime, timedelta
+import time
 
-import paho.mqtt.publish as publish
-import random
+# --- 1. CONFIGURAÇÕES ---
+MQTT_BROKER = "broker.hivemq.com"
+MQTT_PORT = 1883
+# Tópico base para se inscrever usando um wildcard (#)
+# O wildcard '#' inscreve o cliente em TODOS os tópicos que começam com 'bess/telemetria/'
+TOPICO_WILDCARD = "bess/telemetria/#"
+DATA_WINDOW_SECONDS = 120 # Exibir dados dos últimos 2 minutos
 
+# --- 2. GERENCIAMENTO DE ESTADO SEGURO ---
+# Usamos o st.session_state para armazenar os dados de forma persistente na sessão do usuário
+if 'data' not in st.session_state:
+    # Estrutura para armazenar séries temporais para cada parâmetro
+    st.session_state.data = {
+        'timestamp': [],
+        'tensao': [],
+        'corrente': [],
+        'potencia': []
+    }
+    # Estrutura para armazenar apenas o último valor conhecido de cada métrica
+    st.session_state.last_known = {
+        'tensao': 0,
+        'corrente': 0,
+        'potencia': 0
+    }
+if 'mqtt_started' not in st.session_state:
+    st.session_state.mqtt_started = False
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='BESS - Gerenciamento', #Tag da URL
-    page_icon=':zap:', # Emoji da URL
+# --- 3. LÓGICA MQTT PARA MÚLTIPLOS TÓPICOS ---
+def on_connect(client, userdata, flags, rc):
+    """Callback de conexão."""
+    if rc == 0:
+        print("Conexão com MQTT estabelecida.")
+        # Se inscreve no tópico com wildcard para receber todas as métricas
+        client.subscribe(TOPICO_WILDCARD)
+        print(f"Inscrito em: {TOPICO_WILDCARD}")
+    else:
+        print(f"Falha na conexão com MQTT, código: {rc}")
+
+def on_message(client, userdata, msg):
+    """Callback que processa as mensagens recebidas de múltiplos tópicos."""
+    try:
+        # Extrai o nome do parâmetro do tópico (ex: 'tensao', 'corrente')
+        parametro = msg.topic.split('/')[-1]
+        valor = float(msg.payload.decode('utf-8'))
+        agora = datetime.now()
+
+        # Verifica se o parâmetro é um dos que queremos armazenar
+        if parametro in st.session_state.data:
+            # Armazena o dado na sua respectiva lista de série temporal
+            st.session_state.data['timestamp'].append(agora)
+            st.session_state.data[parametro].append(valor)
+            
+            # Atualiza o último valor conhecido para as métricas
+            st.session_state.last_known[parametro] = valor
+
+            # Limpa dados antigos para não sobrecarregar a memória
+            limite_tempo = agora - timedelta(seconds=DATA_WINDOW_SECONDS * 1.2) # Buffer de 20%
+            # Esta limpeza é simplificada, uma limpeza mais complexa seria necessária para manter
+            # a integridade perfeita entre as listas, mas para visualização é suficiente.
+            while st.session_state.data['timestamp'] and st.session_state.data['timestamp'][0] < limite_tempo:
+                st.session_state.data['timestamp'].pop(0)
+                # Remove o valor correspondente de todas as listas para manter o alinhamento
+                for key in ['tensao', 'corrente', 'potencia']:
+                    if st.session_state.data[key]:
+                        st.session_state.data[key].pop(0)
+
+    except (ValueError, TypeError, IndexError):
+        pass # Ignora mensagens mal formatadas ou erros de processamento
+
+def start_mqtt_client():
+    """Inicia o cliente MQTT em uma thread separada."""
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    client.loop_forever()
+
+# --- 4. INICIALIZAÇÃO DA THREAD ---
+if not st.session_state.mqtt_started:
+    print("Iniciando a thread do cliente MQTT...")
+    mqtt_thread = threading.Thread(target=start_mqtt_client, daemon=True)
+    mqtt_thread.start()
+    st.session_state.mqtt_started = True
+
+# --- 5. INTERFACE GRÁFICA DO STREAMLIT ---
+st.set_page_config(page_title="BESS - Dashboard Multi-Tópico", page_icon="📊", layout="wide")
+st.title("📊 Dashboard BESS - Monitoramento Multi-Parâmetro")
+
+# Seletor para o usuário escolher o gráfico
+st.sidebar.header("Configurações do Gráfico")
+parametro_selecionado = st.sidebar.selectbox(
+    "Selecione o parâmetro para exibir no gráfico:",
+    ('potencia', 'tensao', 'corrente'),
+    # Formata as opções para ficarem mais amigáveis (ex: "Potência (kW)")
+    format_func=lambda x: f"{x.capitalize()} ({'kW' if x == 'potencia' else 'V' if x == 'tensao' else 'A'})"
 )
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+# Placeholder para o conteúdo dinâmico
+placeholder = st.empty()
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+# Loop principal da interface para atualização contínua
+while True:
+    with placeholder.container():
+        st.header("Métricas em Tempo Real")
+        
+        # Exibe as métricas com os últimos valores conhecidos
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Tensão", f"{st.session_state.last_known['tensao']:.2f} V")
+        col2.metric("Corrente", f"{st.session_state.last_known['corrente']:.2f} A")
+        col3.metric("Potência", f"{st.session_state.last_known['potencia']:.2f} kW")
+        
+        st.write("---")
+        
+        # Prepara os dados para o gráfico selecionado
+        # Faz cópias para evitar problemas de concorrência durante a renderização
+        df = pd.DataFrame({
+            'timestamp': list(st.session_state.data['timestamp']),
+            'valor': list(st.session_state.data[parametro_selecionado])
+        }).dropna().drop_duplicates(subset='timestamp').sort_values('timestamp')
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+        # Cria o gráfico
+        st.header(f"Histórico de {parametro_selecionado.capitalize()}")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=df['timestamp'], 
+            y=df['valor'], 
+            mode='lines', 
+            name=parametro_selecionado
+        ))
+        fig.update_layout(
+            height=450,
+            xaxis_title='Horário',
+            yaxis_title=f"{parametro_selecionado.capitalize()} ({'kW' if parametro_selecionado == 'potencia' else 'V' if parametro_selecionado == 'tensao' else 'A'})"
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
-
-    MIN_YEAR = 1960
-    MAX_YEAR = 2000
-
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
-
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
-
-    return gdp_df
-
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-#st.image("Logo-Baterias-Moura.png", width=200)
-'''
-# :zap: BESS - Battery Energy Storage System
-
-Este projeto poderá servir como base para pesquisas, desenvolvimento de projetos de 
-engenharia elétrica/energia, e implementação prática de soluções baseadas em 
-armazenamento energético.
-'''
-
-# Add some spacing
-''
-''
-
-opcao_estado = st.selectbox(
-    'Selecione o BESS:',
-    ['-', 'PB', 'RN', 'PE']
-)
-
-if opcao_estado == 'PB':
-    opcao_cidade = st.selectbox(
-        'Selecione a cidade:',
-        ['-', 'João Pessoa', 'Campina Grande', 'Várzea']
-    )
-
-elif opcao_estado == 'PE':
-    opcao_cidade = st.selectbox(
-        'Selecione a cidade:',
-        ['-', 'Recife', 'Caruaru']
-    )
-
-elif opcao_estado == 'RN':
-    opcao_cidade = st.selectbox(
-        'Selecione a cidade:',
-        ['-', 'Natal', 'Mossoró']
-    )
-
-# Exemplo extra (opcional): se quiser mostrar a escolha
-if opcao_estado != '-' and opcao_cidade != '-':
-    st.write(f'Você selecionou: {opcao_cidade} - {opcao_estado}')
-    grafico = True
-else: grafico = False
-
-''
-''
-''
-if (grafico):
-    # Dados globais
-    df = pd.DataFrame(columns=['Hora', 'Valor'])
-
-    # Lock para garantir acesso sincronizado aos dados
-    lock = threading.Lock()
-
-    # Função chamada ao receber mensagem
-    def on_message(client, userdata, msg):
-        global df
-        valor = float(msg.payload.decode())
-
-        with lock:
-            nova_linha = pd.DataFrame({
-                'Hora': [datetime.now()],
-                'Valor': [valor]
-            })
-            df = pd.concat([df, nova_linha], ignore_index=True)
-
-    # Configura o cliente MQTT
-    def iniciar_mqtt():
-        client = mqtt.Client()
-        client.on_message = on_message
-
-        # Conecte ao broker (altere se necessário)
-        client.connect("broker.hivemq.com", 1883, 60)
-
-        # Tópico que deseja assinar (ex: "bess/energia")
-        client.subscribe("bess/energia")
-
-        client.loop_forever()
-
-    # Inicia o MQTT em uma thread separada
-    threading.Thread(target=iniciar_mqtt, daemon=True).start()
-
-    # Espaço do gráfico
-    grafico = st.empty()
-
-    # Loop do Streamlit para atualizar gráfico
-    while True:
-        with lock:
-            if not df.empty:
-                df_filtrado = df.tail(50).set_index('Hora')  # Limita a 50 pontos mais recentes
-                grafico.line_chart(df_filtrado)
-
-        time.sleep(1)
-
-
-
+    # Pausa para controlar a taxa de atualização
+    time.sleep(1)
