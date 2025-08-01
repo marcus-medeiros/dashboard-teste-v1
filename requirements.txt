@@ -1,4 +1,5 @@
 streamlit
-paho-mqtt
 pandas
 numpy
+paho-mqtt
+plotly
