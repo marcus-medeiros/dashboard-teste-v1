@@ -73,7 +73,7 @@ gdp_df = get_gdp_data()
 # Draw the actual page
 
 # Set the title that appears at the top of the page.
-st.image("Logo-Baterias-Moura.png", width=200)
+#st.image("Logo-Baterias-Moura.png", width=200)
 '''
 # :zap: BESS - Battery Energy Storage System
 
