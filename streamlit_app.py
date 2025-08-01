@@ -5,6 +5,7 @@ import threading
 import queue
 import time
 import plotly.graph_objects as go
+from streamlit_autorefresh import st_autorefresh
 
 MQTT_BROKER = "broker.emqx.io"
 MQTT_PORT = 1883
@@ -78,4 +79,4 @@ for key, color in zip(["tensao", "corrente", "potencia"], ["red", "blue", "green
 
 fig.update_layout(xaxis_title="Tempo", yaxis_title="Valor", template="plotly_dark")
 st.plotly_chart(fig, use_container_width=True)
-st.experimental_rerun()  # 🔄 força atualização contínua
+st_autorefresh(interval=3000, key="telemetria_refresh")
