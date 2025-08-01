@@ -6,6 +6,7 @@ import time
 import paho.mqtt.client as mqtt
 import altair as alt
 import random
+import socket
 
 # --- Configuração da Página ---
 st.set_page_config(
@@ -51,6 +52,10 @@ if cidades_selecionadas:
             } for cidade in cidades_selecionadas
         }
         st.session_state.cidades_monitoradas = cidades_selecionadas
+        # Limpa o erro de conexão se a seleção mudar
+        if 'mqtt_connection_error' in st.session_state:
+            del st.session_state['mqtt_connection_error']
+
 
     topicos_a_subscrever = []
     if not usar_simulador:
@@ -79,45 +84,57 @@ if cidades_selecionadas:
                 df_atualizado = pd.concat([df_alvo, nova_linha], ignore_index=True)
                 st.session_state.dados[cidade_topico][parametro_topico] = df_atualizado.tail(100)
 
-    # Função para rodar o cliente MQTT (Não alterado)
+    # Função para rodar o cliente MQTT (com tratamento de erro)
     def iniciar_mqtt():
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
-        client.on_message = on_message
-        client.connect("test.mosquitto.org", 1883, 60)
-        for t in topicos_a_subscrever:
-            client.subscribe(t)
-        client.loop_forever()
+        try:
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+            client.on_message = on_message
+            client.connect("test.mosquitto.org", 1883, 60)
+            
+            # Limpa erro anterior se a conexão for bem sucedida
+            if 'mqtt_connection_error' in st.session_state:
+                del st.session_state['mqtt_connection_error']
 
-    # Função para simular a chegada de dados em uma thread (Não alterado)
+            for t in topicos_a_subscrever:
+                client.subscribe(t)
+            client.loop_forever()
+        except (socket.gaierror, OSError) as e:
+            st.session_state.mqtt_connection_error = f"Erro de Conexão MQTT: {e}. Verifique sua conexão de rede ou firewall."
+        except Exception as e:
+            st.session_state.mqtt_connection_error = f"Ocorreu um erro inesperado no MQTT: {e}"
+
+
+    # Função para simular a chegada de dados (com correção para race condition)
     def iniciar_simulador():
         while True:
-            with lock:
-                for cidade_nome_amigavel in cidades_selecionadas:
-                    cidade_formatada = cidade_nome_amigavel.lower().replace(" ", "_")
-                    if cidade_formatada in st.session_state.dados:
-                        agora = datetime.now()
-                        dados_cidade = st.session_state.dados[cidade_formatada]
-                        
-                        dados_cidade['tensao'] = pd.concat([
-                            dados_cidade['tensao'],
-                            pd.DataFrame({'Hora': [agora], 'Valor': [220 + random.uniform(-5, 5)]})
-                        ], ignore_index=True).tail(100)
+            # FIX: Verifica se 'dados' já foi inicializado antes de usá-lo
+            if 'dados' in st.session_state:
+                with lock:
+                    for cidade_nome_amigavel in cidades_selecionadas:
+                        cidade_formatada = cidade_nome_amigavel.lower().replace(" ", "_")
+                        if cidade_formatada in st.session_state.dados:
+                            agora = datetime.now()
+                            dados_cidade = st.session_state.dados[cidade_formatada]
+                            
+                            dados_cidade['tensao'] = pd.concat([
+                                dados_cidade['tensao'],
+                                pd.DataFrame({'Hora': [agora], 'Valor': [220 + random.uniform(-5, 5)]})
+                            ], ignore_index=True).tail(100)
 
-                        dados_cidade['corrente'] = pd.concat([
-                            dados_cidade['corrente'],
-                            pd.DataFrame({'Hora': [agora], 'Valor': [10 + random.uniform(-2, 2)]})
-                        ], ignore_index=True).tail(100)
+                            dados_cidade['corrente'] = pd.concat([
+                                dados_cidade['corrente'],
+                                pd.DataFrame({'Hora': [agora], 'Valor': [10 + random.uniform(-2, 2)]})
+                            ], ignore_index=True).tail(100)
 
-                        dados_cidade['potencia'] = pd.concat([
-                            dados_cidade['potencia'],
-                            pd.DataFrame({'Hora': [agora], 'Valor': [2.5 + random.uniform(-0.5, 0.5)]})
-                        ], ignore_index=True).tail(100)
+                            dados_cidade['potencia'] = pd.concat([
+                                dados_cidade['potencia'],
+                                pd.DataFrame({'Hora': [agora], 'Valor': [2.5 + random.uniform(-0.5, 0.5)]})
+                            ], ignore_index=True).tail(100)
             time.sleep(2)
 
     # Inicia a thread (MQTT ou Simulador) apenas uma vez
-    session_key = f"thread_started_{'sim' if usar_simulador else 'mqtt'}"
+    session_key = f"thread_started_{'sim' if usar_simulador else 'mqtt'}_{'_'.join(sorted(cidades_selecionadas))}"
     if session_key not in st.session_state:
-        # Limpa chaves de threads antigas se o modo for trocado
         for key in list(st.session_state.keys()):
             if key.startswith('thread_started_'):
                 del st.session_state[key]
@@ -129,6 +146,11 @@ if cidades_selecionadas:
 
     # --- GERAÇÃO DOS GRÁFICOS ---
     st.header("Comparativos em Tempo Real")
+    
+    # Mostra erro de conexão MQTT se houver
+    if 'mqtt_connection_error' in st.session_state:
+        st.error(st.session_state.mqtt_connection_error)
+
     placeholders = {'tensao': st.empty(), 'corrente': st.empty(), 'potencia': st.empty()}
     info_parametros = {
         'tensao': ('Tensão', 'Tensão (V)'),
@@ -136,7 +158,6 @@ if cidades_selecionadas:
         'potencia': ('Potência', 'Potência (kW)')
     }
 
-    # Lógica de desenho dos gráficos (fora do loop while)
     with lock:
         for parametro, area in placeholders.items():
             lista_dfs = []
@@ -165,8 +186,6 @@ if cidades_selecionadas:
                 ).properties(title=f"Comparativo de {titulo_amigavel}").interactive()
                 area.altair_chart(chart, use_container_width=True)
 
-    # --- ATUALIZAÇÃO AUTOMÁTICA DA PÁGINA ---
-    # Pausa por 1 segundo e agenda uma re-execução do script
     time.sleep(1)
     st.rerun()
 
