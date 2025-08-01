@@ -1,15 +1,20 @@
 import streamlit as st
 import pandas as pd
-import math
 from pathlib import Path
-import numpy as np
 
 from datetime import datetime
 import time
 import threading
 import paho.mqtt.client as mqtt
 import plotly.graph_objects as go
+from datetime import datetime, timedelta  # <== adicionar timedelta
 
+
+
+# Definições do broker MQTT
+MQTT_BROKER = "broker.hivemq.com"
+MQTT_PORT = 1883
+MQTT_TOPIC = "bess/energia"
 
 # git add .
 # git commit -m "Descreva o que foi alterado aqui"
