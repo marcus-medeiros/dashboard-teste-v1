@@ -1,94 +1,113 @@
-# Arquivo: dashboard_app.py
-# Descrição: Dashboard para visualizar os dados de energia do BESS a partir de um banco de dados SQLite.
+# Arquivo: dashboard_realtime.py
+# Descrição: Recebe dados via MQTT e os exibe em um gráfico de tempo real no Streamlit.
 
 import streamlit as st
 import pandas as pd
-import sqlite3
 import plotly.graph_objects as go
+import paho.mqtt.client as mqtt
+import threading
 from datetime import datetime, timedelta
 
 # --- Configurações ---
-DB_FILE = "dados_energia.db"
+MQTT_BROKER = "broker.hivemq.com"
+MQTT_PORT = 1883
+MQTT_TOPIC = "bess/energia"
+DATA_WINDOW_SECONDS = 60 # Janela de tempo dos dados a serem exibidos (60 segundos)
 
-# Configuração da página do Streamlit
-st.set_page_config(
-    page_title='Dashboard BESS',
-    page_icon='🔋',
-    layout='wide'
-)
+# --- Gerenciamento de Estado do Streamlit ---
+# Usamos o st.session_state para manter os dados entre as atualizações da página
+if 'timestamps' not in st.session_state:
+    st.session_state.timestamps = []
+if 'values' not in st.session_state:
+    st.session_state.values = []
+if 'mqtt_started' not in st.session_state:
+    st.session_state.mqtt_started = False
 
-def fetch_data(minutes_ago=10):
-    """Busca dados do banco de dados dos últimos X minutos."""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            time_filter = (datetime.now() - timedelta(minutes=minutes_ago)).isoformat()
-            query = f"SELECT timestamp, valor FROM energia WHERE timestamp >= '{time_filter}' ORDER BY timestamp ASC"
-            df = pd.read_sql_query(query, conn)
-            if not df.empty:
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
-            return df
-    except Exception as e:
-        st.error(f"Não foi possível ler o banco de dados. O coletor está rodando? Erro: {e}")
-        return pd.DataFrame({'timestamp': [], 'valor': []})
+# --- Lógica MQTT (executará em uma thread separada) ---
 
-# --- Layout do Dashboard ---
-st.title("🔋 Dashboard de Monitoramento BESS")
-st.markdown(f"Exibindo dados em tempo real. Atualizado pela última vez em: `{datetime.now().strftime('%H:%M:%S')}`")
-
-minutes = st.sidebar.slider("Ver dados dos últimos (minutos):", 1, 120, 10)
-
-df = fetch_data(minutes_ago=minutes)
-
-if df.empty:
-    st.warning("Aguardando dados... Verifique se o simulador e o coletor estão em execução.")
-else:
-    # --- Métricas Principais ---
-    st.subheader("Métricas Atuais")
-    last_power = df['valor'].iloc[-1]
-    avg_power = df['valor'].mean()
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Potência Atual", f"{last_power:.2f} kW")
-    col2.metric("Potência Média (período)", f"{avg_power:.2f} kW")
-
-    # Determina o status com base no valor da potência
-    if last_power < -5:
-        status_text = "Carregando"
-        status_emoji = "🔌"
-    elif last_power > 5:
-        status_text = "Descarregando"
-        status_emoji = "⚡"
+def on_connect(client, userdata, flags, rc):
+    """Callback de conexão."""
+    if rc == 0:
+        print("Conexão com MQTT estabelecida com sucesso.")
+        client.subscribe(MQTT_TOPIC)
     else:
-        status_text = "Ocioso"
-        status_emoji = " standby" # Emoji de espera, ou pode usar 💤
-    col3.metric("Status Atual", f"{status_text} {status_emoji}")
+        print(f"Falha na conexão com MQTT, código: {rc}")
 
-    st.write("---")
+def on_message(client, userdata, msg):
+    """Callback de recebimento de mensagens."""
+    try:
+        valor = float(msg.payload.decode('utf-8'))
+        agora = datetime.now()
 
-    # --- Gráfico Principal ---
-    st.subheader(f"Histórico de Potência ({minutes} min)")
+        st.session_state.timestamps.append(agora)
+        st.session_state.values.append(valor)
+
+        # Lógica para manter apenas os dados da janela de tempo definida (sliding window)
+        limite_tempo = agora - timedelta(seconds=DATA_WINDOW_SECONDS)
+        while st.session_state.timestamps and st.session_state.timestamps[0] < limite_tempo:
+            st.session_state.timestamps.pop(0)
+            st.session_state.values.pop(0)
+
+    except ValueError:
+        # Ignora mensagens que não podem ser convertidas para float
+        pass
+
+def start_mqtt_client():
+    """Inicia o cliente MQTT em uma thread separada para não bloquear o Streamlit."""
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    client.loop_forever()
+
+# --- Inicia a thread do MQTT apenas uma vez por sessão ---
+if not st.session_state.mqtt_started:
+    print("Iniciando a thread do cliente MQTT...")
+    mqtt_thread = threading.Thread(target=start_mqtt_client, daemon=True)
+    mqtt_thread.start()
+    st.session_state.mqtt_started = True
+
+# --- Interface Gráfica do Streamlit ---
+st.set_page_config(page_title="Dashboard BESS em Tempo Real", layout="wide")
+st.title("🔋 Dashboard BESS em Tempo Real")
+st.markdown(f"Exibindo dados do tópico `{MQTT_TOPIC}` nos últimos {DATA_WINDOW_SECONDS} segundos.")
+
+# Placeholder para o gráfico, para que possamos atualizá-lo
+placeholder = st.empty()
+
+# Cria cópias dos dados para evitar problemas de concorrência com a thread
+current_timestamps = list(st.session_state.timestamps)
+current_values = list(st.session_state.values)
+
+with placeholder.container():
+    # --- Métricas ---
+    col1, col2 = st.columns(2)
+    if current_values:
+        last_value = current_values[-1]
+        avg_value = sum(current_values) / len(current_values)
+        col1.metric("Potência Atual", f"{last_value:.2f} kW")
+        col2.metric("Potência Média (na janela)", f"{avg_value:.2f} kW")
+    else:
+        col1.metric("Potência Atual", "Aguardando...")
+        col2.metric("Potência Média", "Aguardando...")
+
+    # --- Gráfico ---
     fig = go.Figure()
-    
-    # Adiciona linha de potência
     fig.add_trace(go.Scatter(
-        x=df['timestamp'],
-        y=df['valor'],
-        mode='lines',
+        x=current_timestamps,
+        y=current_values,
+        mode='lines+markers',
         name='Potência',
-        line=dict(color='deepskyblue', width=3),
-        fill='tozeroy' # Preenche a área abaixo da linha
+        line=dict(color='deepskyblue', width=3)
     ))
-
     fig.update_layout(
+        height=500,
         xaxis_title='Horário',
         yaxis_title='Potência (kW)',
-        hovermode='x unified',
-        height=500,
-        yaxis_zeroline=True, 
-        yaxis_zerolinewidth=2, 
-        yaxis_zerolinecolor='rgba(255,0,0,0.5)' # Linha vermelha no zero para ver carga/descarga
+        # Define o range do eixo X para ser exatamente a janela de tempo
+        xaxis=dict(range=[datetime.now() - timedelta(seconds=DATA_WINDOW_SECONDS), datetime.now()])
     )
     st.plotly_chart(fig, use_container_width=True)
 
-# Força o Streamlit a recarregar a página a cada 10 segundos para buscar novos dados
-st.rerun(ttl=10)
+# Força a re-execução do script a cada 1 segundo para atualizar a UI
+st.rerun(ttl=1)
