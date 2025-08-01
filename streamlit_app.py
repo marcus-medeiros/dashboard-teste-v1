@@ -36,7 +36,6 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    # Adiciona um toggle para ligar/desligar a simulação de dados
     usar_simulador = st.toggle("Simular Dados (para teste)", value=True)
     st.caption("Ative esta opção para ver os gráficos funcionando se não houver dados reais no MQTT.")
 
@@ -53,7 +52,6 @@ if cidades_selecionadas:
         }
         st.session_state.cidades_monitoradas = cidades_selecionadas
 
-    # Gera a lista de tópicos MQTT apenas se não estiver usando o simulador
     topicos_a_subscrever = []
     if not usar_simulador:
         for cidade in cidades_selecionadas:
@@ -90,7 +88,7 @@ if cidades_selecionadas:
             client.subscribe(t)
         client.loop_forever()
 
-    # NOVA FUNÇÃO para simular a chegada de dados em uma thread
+    # Função para simular a chegada de dados em uma thread (Não alterado)
     def iniciar_simulador():
         while True:
             with lock:
@@ -100,7 +98,6 @@ if cidades_selecionadas:
                         agora = datetime.now()
                         dados_cidade = st.session_state.dados[cidade_formatada]
                         
-                        # Simula valores com base em um valor central e uma variação
                         dados_cidade['tensao'] = pd.concat([
                             dados_cidade['tensao'],
                             pd.DataFrame({'Hora': [agora], 'Valor': [220 + random.uniform(-5, 5)]})
@@ -117,9 +114,10 @@ if cidades_selecionadas:
                         ], ignore_index=True).tail(100)
             time.sleep(2)
 
-    # Inicia a thread (MQTT ou Simulador)
+    # Inicia a thread (MQTT ou Simulador) apenas uma vez
     session_key = f"thread_started_{'sim' if usar_simulador else 'mqtt'}"
-    if session_key not in st.session_state or st.session_state.get('cidades_monitoradas') != cidades_selecionadas:
+    if session_key not in st.session_state:
+        # Limpa chaves de threads antigas se o modo for trocado
         for key in list(st.session_state.keys()):
             if key.startswith('thread_started_'):
                 del st.session_state[key]
@@ -128,9 +126,8 @@ if cidades_selecionadas:
         thread = threading.Thread(target=target_func, daemon=True)
         thread.start()
         st.session_state[session_key] = True
-        st.session_state.cidades_monitoradas = cidades_selecionadas
 
-    # --- GERAÇÃO DOS GRÁFICOS --- (Lógica não alterada)
+    # --- GERAÇÃO DOS GRÁFICOS ---
     st.header("Comparativos em Tempo Real")
     placeholders = {'tensao': st.empty(), 'corrente': st.empty(), 'potencia': st.empty()}
     info_parametros = {
@@ -139,33 +136,39 @@ if cidades_selecionadas:
         'potencia': ('Potência', 'Potência (kW)')
     }
 
-    while True:
-        with lock:
-            for parametro, area in placeholders.items():
-                lista_dfs = []
-                for cidade_nome_amigavel in cidades_selecionadas:
-                    cidade_formatada = cidade_nome_amigavel.lower().replace(" ", "_")
+    # Lógica de desenho dos gráficos (fora do loop while)
+    with lock:
+        for parametro, area in placeholders.items():
+            lista_dfs = []
+            for cidade_nome_amigavel in cidades_selecionadas:
+                cidade_formatada = cidade_nome_amigavel.lower().replace(" ", "_")
+                if cidade_formatada in st.session_state.dados:
                     df_parametro = st.session_state.dados[cidade_formatada][parametro]
                     if not df_parametro.empty:
                         df_temp = df_parametro.copy()
                         df_temp['Cidade'] = cidade_nome_amigavel
                         lista_dfs.append(df_temp)
 
-                if lista_dfs:
-                    df_plot = pd.concat(lista_dfs, ignore_index=True)
-                    df_plot['Hora'] = pd.to_datetime(df_plot['Hora'])
-                    titulo_amigavel, unidade = info_parametros[parametro]
-                    chart = alt.Chart(df_plot).mark_line().encode(
-                        x=alt.X('Hora:T', title='Hora'),
-                        y=alt.Y('Valor:Q', title=unidade, scale=alt.Scale(zero=False)),
-                        color=alt.Color('Cidade:N', title='Cidade'),
-                        tooltip=[
-                            alt.Tooltip('Cidade:N', title='Cidade'),
-                            alt.Tooltip('Hora:T', format='%H:%M:%S', title='Hora'),
-                            alt.Tooltip('Valor:Q', format='.2f', title=unidade)
-                        ],
-                    ).properties(title=f"Comparativo de {titulo_amigavel}").interactive()
-                    area.altair_chart(chart, use_container_width=True)
-        time.sleep(1)
+            if lista_dfs:
+                df_plot = pd.concat(lista_dfs, ignore_index=True)
+                df_plot['Hora'] = pd.to_datetime(df_plot['Hora'])
+                titulo_amigavel, unidade = info_parametros[parametro]
+                chart = alt.Chart(df_plot).mark_line().encode(
+                    x=alt.X('Hora:T', title='Hora'),
+                    y=alt.Y('Valor:Q', title=unidade, scale=alt.Scale(zero=False)),
+                    color=alt.Color('Cidade:N', title='Cidade'),
+                    tooltip=[
+                        alt.Tooltip('Cidade:N', title='Cidade'),
+                        alt.Tooltip('Hora:T', format='%H:%M:%S', title='Hora'),
+                        alt.Tooltip('Valor:Q', format='.2f', title=unidade)
+                    ],
+                ).properties(title=f"Comparativo de {titulo_amigavel}").interactive()
+                area.altair_chart(chart, use_container_width=True)
+
+    # --- ATUALIZAÇÃO AUTOMÁTICA DA PÁGINA ---
+    # Pausa por 1 segundo e agenda uma re-execução do script
+    time.sleep(1)
+    st.rerun()
+
 else:
     st.info("⬅️ Por favor, selecione uma ou mais cidades no painel à esquerda para iniciar o monitoramento.")
