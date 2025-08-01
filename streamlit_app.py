@@ -1,83 +1,82 @@
-import sqlite3
-import random
-import time
-from datetime import datetime
 import pandas as pd
+import random
+from datetime import datetime, timedelta
 import streamlit as st
-import sys
+import os
 
-# Nome do banco de dados
-DB_NAME = "bess_dados.db"
+# Nome do arquivo CSV
+CSV_ARQUIVO = "bess_dados.csv"
 
-# --- Função para criar a tabela no banco ---
-def criar_banco():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS bess_dados (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT,
-            tensao REAL,
-            corrente REAL,
-            potencia REAL,
-            soc REAL
-        )
-    """)
-    conn.commit()
-    conn.close()
+# --- 1. Função para gerar dados simulados ---
+def gerar_dados_simulados(qtd=1000):
+    timestamps = []
+    tensoes = []
+    correntes = []
+    potencias = []
+    socs = []
 
-# --- Função para inserir dados simulados ---
-def simular_dados():
-    criar_banco()
-    while True:
-        timestamp = datetime.now().isoformat(sep=' ', timespec='seconds')
-        tensao = round(random.uniform(300, 400), 2)      # Volts
-        corrente = round(random.uniform(-100, 100), 2)   # Amperes (negativo = descarga)
-        potencia = round(tensao * corrente / 1000, 2)    # kW
-        soc = round(random.uniform(20, 100), 2)          # %
+    tempo_inicial = datetime.now()
+    soc_atual = random.uniform(40, 80)
 
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO bess_dados (timestamp, tensao, corrente, potencia, soc) VALUES (?, ?, ?, ?, ?)",
-                       (timestamp, tensao, corrente, potencia, soc))
-        conn.commit()
-        conn.close()
+    for i in range(qtd):
+        ts = tempo_inicial + timedelta(seconds=i * 2)
 
-        print(f"[{timestamp}] V={tensao}V | I={corrente}A | P={potencia}kW | SOC={soc}%")
-        time.sleep(2)
+        tensao = round(random.uniform(320, 410), 2)     # Volts
+        corrente = round(random.uniform(-120, 120), 2)  # Amperes
+        potencia = round(tensao * corrente / 1000, 2)   # kW
 
-# --- Função da interface Streamlit ---
-def visualizar_dados():
-    st.set_page_config(page_title="Monitoramento BESS", layout="wide")
-    st.title("🔋 Monitoramento em Tempo Real - BESS")
+        # Atualiza o SOC de forma incremental
+        delta_soc = -potencia * 2 / 3600  # kW * s -> kWh -> % aproximado
+        soc_atual += delta_soc
+        soc_atual = max(0, min(100, soc_atual))         # Limita entre 0% e 100%
 
-    criar_banco()
-    conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT * FROM bess_dados ORDER BY timestamp DESC LIMIT 100", conn)
-    conn.close()
+        timestamps.append(ts)
+        tensoes.append(tensao)
+        correntes.append(corrente)
+        potencias.append(potencia)
+        socs.append(round(soc_atual, 2))
 
+    df = pd.DataFrame({
+        "timestamp": timestamps,
+        "tensao": tensoes,
+        "corrente": correntes,
+        "potencia": potencias,
+        "soc": socs
+    })
+
+    df.to_csv(CSV_ARQUIVO, index=False)
+    print(f"✅ {qtd} dados simulados salvos em '{CSV_ARQUIVO}'.")
+
+# --- 2. Streamlit App para visualização ---
+def app_streamlit():
+    st.set_page_config(page_title="Dashboard BESS Simulado", layout="wide")
+    st.title("🔋 Dashboard BESS - Simulação")
+
+    if not os.path.exists(CSV_ARQUIVO):
+        st.warning("Arquivo de dados não encontrado. Gerando dados simulados...")
+        gerar_dados_simulados()
+
+    df = pd.read_csv(CSV_ARQUIVO)
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values("timestamp")
 
-    col1, col2, col3, col4 = st.columns(4)
-    if not df.empty:
-        col1.metric("SOC Atual", f"{df['soc'].iloc[-1]:.2f} %")
-        col2.metric("Potência", f"{df['potencia'].iloc[-1]:.2f} kW")
-        col3.metric("Tensão", f"{df['tensao'].iloc[-1]:.2f} V")
-        col4.metric("Corrente", f"{df['corrente'].iloc[-1]:.2f} A")
-    else:
-        st.warning("Nenhum dado disponível ainda.")
+    st.markdown("Visualização dos dados simulados de um sistema de armazenamento de energia (BESS).")
 
-    st.subheader("📊 Gráficos (últimos dados)")
+    # Métricas
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("SOC Atual", f"{df['soc'].iloc[-1]:.2f} %")
+    col2.metric("Potência", f"{df['potencia'].iloc[-1]:.2f} kW")
+    col3.metric("Tensão", f"{df['tensao'].iloc[-1]:.2f} V")
+    col4.metric("Corrente", f"{df['corrente'].iloc[-1]:.2f} A")
+
+    # Gráficos
+    st.subheader("📈 Gráfico: Potência e SOC ao longo do tempo")
     st.line_chart(df.set_index("timestamp")[["potencia", "soc"]])
 
-    with st.expander("🔎 Ver todos os dados"):
+    with st.expander("🔎 Ver tabela completa"):
         st.dataframe(df[::-1], use_container_width=True)
 
-# --- Execução baseada no argumento ---
+# --- 3. Execução principal ---
 if __name__ == "__main__":
-    modo = sys.argv[1] if len(sys.argv) > 1 else "visualizar"
-    
-    if modo == "simular":
-        simular_dados()
-    else:
-        visualizar_dados()
+    # Executa como app Streamlit
+    app_streamlit()
